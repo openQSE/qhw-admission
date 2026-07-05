@@ -905,7 +905,15 @@ static qhw_adm_rc_t add_config_devices(
 
 	for (i = 0; i < config->device_count; i++) {
 		struct qhw_adm_device_entry *entry;
+		uint64_t device_id;
 		qhw_adm_rc_t rc;
+
+		device_id = config->devices[i].profile.device_id;
+		if (qhw_hash_table_find(&ctx->devices, device_id) != NULL &&
+		    qhw_adm_device_has_active_reservation(ctx, device_id)) {
+			qhw_adm_set_error(ctx, "device has active reservations");
+			return QHW_ADM_ERR_STATE;
+		}
 
 		rc = qhw_adm_create_device_entry(
 			&config->devices[i].profile,

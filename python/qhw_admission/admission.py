@@ -17,6 +17,21 @@ THREAD_SAFE = _native.QHW_ADM_THREAD_SAFE
 CONFIG_MERGE = _native.QHW_ADM_CONFIG_MERGE_VALUE
 CONFIG_REPLACE = _native.QHW_ADM_CONFIG_REPLACE_VALUE
 
+WORKLOAD_QUANTUM_JOB = _native.QHW_ADM_WORKLOAD_QUANTUM_JOB
+WORKLOAD_HYBRID_JOB = _native.QHW_ADM_WORKLOAD_HYBRID_JOB
+
+DECISION_ACCEPTED = _native.QHW_ADM_DECISION_ACCEPTED
+DECISION_DELAYED = _native.QHW_ADM_DECISION_DELAYED
+DECISION_REJECTED = _native.QHW_ADM_DECISION_REJECTED
+
+RESERVATION_PENDING = _native.QHW_ADM_RESERVATION_PENDING
+RESERVATION_ACTIVE = _native.QHW_ADM_RESERVATION_ACTIVE
+RESERVATION_RELEASED = _native.QHW_ADM_RESERVATION_RELEASED
+RESERVATION_EXPIRED = _native.QHW_ADM_RESERVATION_EXPIRED
+RESERVATION_CANCELLED = _native.QHW_ADM_RESERVATION_CANCELLED
+
+REASON_NONE = _native.QHW_ADM_REASON_NONE
+
 
 class AdmissionError(RuntimeError):
     pass
@@ -126,6 +141,104 @@ class Estimate:
         self.confidence_ppm = native.confidence_ppm
 
 
+class AdmissionRequest:
+    def __init__(
+        self,
+        request_id,
+        device_id,
+        user_id,
+        job_id,
+        scope_id,
+        workload_kind,
+        walltime_ns,
+        task_class,
+        reservation_id=0,
+        ttl_ns=0,
+        classical_runtime_ns=0,
+        overhead_ns=0,
+        priority=0,
+    ):
+        self._native = _native.qhw_adm_py_request_create_single(
+            request_id,
+            device_id,
+            user_id,
+            job_id,
+            scope_id,
+            reservation_id,
+            workload_kind,
+            walltime_ns,
+            ttl_ns,
+            classical_runtime_ns,
+            overhead_ns,
+            priority,
+            task_class._native,
+        )
+        if self._native is None:
+            raise AdmissionError("qhw_adm_request allocation failed")
+
+    def close(self):
+        if self._native is not None:
+            _native.qhw_adm_py_request_destroy(self._native)
+            self._native = None
+
+    def __del__(self):
+        self.close()
+
+
+class Decision:
+    def __init__(self, native):
+        self.decision = native.decision
+        self.request_id = native.request_id
+        self.device_id = native.device_id
+        self.scope_id = native.scope_id
+        self.reservation_id = native.reservation_id
+        self.reason_code = native.reason_code
+        self.credits_required = native.credits_required
+        self.rate_required = native.rate_required
+        self.capacity_available = native.capacity_available
+        self.estimated_total_ns = native.estimated_total_ns
+        self.estimated_start_ns = native.estimated_start_ns
+        self.estimated_finish_ns = native.estimated_finish_ns
+        self.quantum_budget_ns = native.quantum_budget_ns
+        self.capacity_granted = native.capacity_granted
+        self.confidence_ppm = native.confidence_ppm
+
+
+class Reservation:
+    def __init__(self, native):
+        self.reservation_id = native.reservation_id
+        self.request_id = native.request_id
+        self.device_id = native.device_id
+        self.scope_id = native.scope_id
+        self.user_id = native.user_id
+        self.job_id = native.job_id
+        self.workload_kind = native.workload_kind
+        self.state = native.state
+        self.credits_reserved = native.credits_reserved
+        self.rate_reserved = native.rate_reserved
+        self.quantum_budget_ns = native.quantum_budget_ns
+        self.estimated_total_ns = native.estimated_total_ns
+        self.created_at_ns = native.created_at_ns
+        self.expires_at_ns = native.expires_at_ns
+
+
+class CapacityView:
+    def __init__(self, native):
+        self.device_id = native.device_id
+        self.scope_id = native.scope_id
+        self.device_state = native.device_state
+        self.active_reservation_count = native.active_reservation_count
+        self.total_credits = native.total_credits
+        self.credits_reserved = native.credits_reserved
+        self.core_available_credits = native.core_available_credits
+        self.effective_available_credits = native.effective_available_credits
+        self.total_rate = native.total_rate
+        self.rate_reserved = native.rate_reserved
+        self.core_available_rate = native.core_available_rate
+        self.effective_available_rate = native.effective_available_rate
+        self.scheduler_policy_id = native.scheduler_policy_id
+
+
 class AdmissionContext:
     def __init__(self, threading=THREAD_USER):
         self._ctx = None
@@ -197,10 +310,25 @@ class AdmissionContext:
             raise AdmissionError("qhw_adm_load_estimator failed")
         return estimator
 
+    def load_policy(self, path):
+        self._require_open()
+        policy = _native.qhw_adm_py_load_policy(self._ctx, path)
+        if policy is None:
+            detail = self.last_error
+            if detail:
+                raise AdmissionError(f"qhw_adm_load_policy failed: {detail}")
+            raise AdmissionError("qhw_adm_load_policy failed")
+        return policy
+
     def add_estimator_path(self, path):
         self._require_open()
         rc = _native.qhw_adm_add_estimator_path(self._ctx, path)
         self._check_rc(rc, "qhw_adm_add_estimator_path")
+
+    def add_policy_path(self, path):
+        self._require_open()
+        rc = _native.qhw_adm_add_policy_path(self._ctx, path)
+        self._check_rc(rc, "qhw_adm_add_policy_path")
 
     def unregister_device(self, device_id):
         self._require_open()
@@ -227,6 +355,17 @@ class AdmissionContext:
         )
         self._check_rc(rc, "qhw_adm_set_estimator")
 
+    def set_policy(self, device_id, name):
+        self._require_open()
+        rc = _native.qhw_adm_set_policy(
+            self._ctx,
+            device_id,
+            name,
+            None,
+            0,
+        )
+        self._check_rc(rc, "qhw_adm_set_policy")
+
     def estimate_baseline(self, device_id):
         self._require_open()
         estimate = _native.qhw_adm_estimate_t()
@@ -252,6 +391,82 @@ class AdmissionContext:
         self._check_rc(rc, "qhw_adm_estimate_qtask_class")
         return Estimate(estimate)
 
+    def evaluate(self, request):
+        self._require_open()
+        decision = _native.qhw_adm_decision_t()
+        decision.struct_size = _native.qhw_adm_decision_sizeof()
+        rc = _native.qhw_adm_evaluate(self._ctx, request._native, decision)
+        self._check_rc(rc, "qhw_adm_evaluate")
+        return Decision(decision)
+
+    def reserve(self, request):
+        self._require_open()
+        decision = _native.qhw_adm_decision_t()
+        decision.struct_size = _native.qhw_adm_decision_sizeof()
+        rc = _native.qhw_adm_reserve(self._ctx, request._native, decision)
+        self._check_rc(rc, "qhw_adm_reserve")
+        return Decision(decision)
+
+    def get_reservation(self, reservation_id):
+        self._require_open()
+        reservation = _native.qhw_adm_reservation_t()
+        reservation.struct_size = _native.qhw_adm_reservation_sizeof()
+        rc = _native.qhw_adm_get_reservation(
+            self._ctx,
+            reservation_id,
+            reservation,
+        )
+        self._check_rc(rc, "qhw_adm_get_reservation")
+        return Reservation(reservation)
+
+    def get_capacity(self, device_id, scope_id=0):
+        self._require_open()
+        capacity = _native.qhw_adm_capacity_view_t()
+        capacity.struct_size = _native.qhw_adm_capacity_view_sizeof()
+        rc = _native.qhw_adm_get_capacity(
+            self._ctx,
+            device_id,
+            scope_id,
+            capacity,
+        )
+        self._check_rc(rc, "qhw_adm_get_capacity")
+        return CapacityView(capacity)
+
+    def release(self, reservation_id, reason_code=REASON_NONE):
+        self._require_open()
+        rc = _native.qhw_adm_release(
+            self._ctx,
+            reservation_id,
+            reason_code,
+        )
+        self._check_rc(rc, "qhw_adm_release")
+
+    def cancel(self, reservation_id, reason_code=REASON_NONE):
+        self._require_open()
+        rc = _native.qhw_adm_cancel(
+            self._ctx,
+            reservation_id,
+            reason_code,
+        )
+        self._check_rc(rc, "qhw_adm_cancel")
+
+    def renew(self, reservation_id, now_ns, ttl_ns):
+        self._require_open()
+        rc = _native.qhw_adm_renew(
+            self._ctx,
+            reservation_id,
+            now_ns,
+            ttl_ns,
+        )
+        self._check_rc(rc, "qhw_adm_renew")
+
+    def expire(self, now_ns=0):
+        self._require_open()
+        expired_count = _native.qhw_adm_py_expire(self._ctx, now_ns)
+        if expired_count < 0:
+            self._check_rc(ERR_STATE, "qhw_adm_expire")
+        return expired_count
+
     def _require_open(self):
         if self._ctx is None:
             raise AdmissionError("admission context is closed")
@@ -267,12 +482,25 @@ class AdmissionContext:
 __all__ = [
     "AdmissionContext",
     "AdmissionError",
+    "AdmissionRequest",
     "Baseline",
+    "CapacityView",
     "CONFIG_MERGE",
     "CONFIG_REPLACE",
+    "DECISION_ACCEPTED",
+    "DECISION_DELAYED",
+    "DECISION_REJECTED",
+    "Decision",
     "DeviceProfile",
     "Estimate",
     "QtaskClass",
+    "REASON_NONE",
+    "RESERVATION_ACTIVE",
+    "RESERVATION_CANCELLED",
+    "RESERVATION_EXPIRED",
+    "RESERVATION_PENDING",
+    "RESERVATION_RELEASED",
+    "Reservation",
     "OK",
     "ERR_INVAL",
     "ERR_NOMEM",
@@ -284,4 +512,6 @@ __all__ = [
     "ERR_EXISTS",
     "THREAD_USER",
     "THREAD_SAFE",
+    "WORKLOAD_HYBRID_JOB",
+    "WORKLOAD_QUANTUM_JOB",
 ]

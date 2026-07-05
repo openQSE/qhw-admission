@@ -18,6 +18,9 @@ struct qhw_adm_device_entry {
 	const qhw_adm_estimator_desc_t *estimator;
 	void *estimator_state;
 	uint64_t estimator_version;
+	const qhw_adm_policy_desc_t *policy;
+	void *policy_state;
+	uint64_t policy_version;
 };
 
 struct qhw_adm_estimator {
@@ -25,6 +28,20 @@ struct qhw_adm_estimator {
 	char *path;
 	void *handle;
 	const qhw_adm_estimator_desc_t *desc;
+};
+
+struct qhw_adm_policy {
+	char *name;
+	char *path;
+	void *handle;
+	const qhw_adm_policy_desc_t *desc;
+};
+
+struct qhw_adm_reservation_entry {
+	qhw_adm_reservation_t reservation;
+	qhw_adm_kv_t *metadata;
+	const qhw_adm_policy_desc_t *policy;
+	void *policy_state;
 };
 
 struct qhw_adm {
@@ -37,6 +54,10 @@ struct qhw_adm {
 	struct qhw_hash_table estimators;
 	char **estimator_paths;
 	size_t estimator_path_count;
+	char **policy_paths;
+	size_t policy_path_count;
+	qhw_adm_capacity_provider_t capacity_provider;
+	uint64_t next_reservation_id;
 	int registries_initialized;
 	char last_error[QHW_ADM_ERROR_LEN];
 	pthread_mutex_t lock;
@@ -78,6 +99,8 @@ qhw_adm_rc_t qhw_adm_add_u64(uint64_t a, uint64_t b, uint64_t *out);
 qhw_adm_rc_t qhw_adm_mul_u64(uint64_t a, uint64_t b, uint64_t *out);
 
 qhw_adm_rc_t qhw_adm_ceil_div_u64(uint64_t a, uint64_t b, uint64_t *out);
+
+uint64_t qhw_adm_now_ns(void);
 
 qhw_adm_rc_t qhw_adm_validate_baseline(const qhw_adm_baseline_t *baseline);
 
@@ -134,5 +157,36 @@ void qhw_adm_remove_estimator_entry(
 void qhw_adm_free_estimator_entry(void *value, void *user_data);
 
 void qhw_adm_free_estimator_paths(qhw_adm_t *ctx);
+
+qhw_adm_rc_t qhw_adm_validate_policy_desc(
+	const qhw_adm_policy_desc_t *desc);
+
+qhw_adm_rc_t qhw_adm_find_or_load_policy(
+	qhw_adm_t *ctx,
+	const char *name,
+	char **extra_paths,
+	size_t extra_path_count,
+	qhw_adm_policy_t **out_policy,
+	int *out_loaded);
+
+qhw_adm_rc_t qhw_adm_set_device_policy_entry(
+	struct qhw_adm_device_entry *entry,
+	const qhw_adm_policy_t *policy,
+	const qhw_adm_kv_t *options,
+	size_t option_count);
+
+void qhw_adm_remove_policy_entry(
+	qhw_adm_t *ctx,
+	qhw_adm_policy_t *entry);
+
+void qhw_adm_free_policy_entry(void *value, void *user_data);
+
+void qhw_adm_free_policy_paths(qhw_adm_t *ctx);
+
+void qhw_adm_free_reservation_entry(void *value, void *user_data);
+
+int qhw_adm_device_has_active_reservation(
+	qhw_adm_t *ctx,
+	uint64_t device_id);
 
 #endif

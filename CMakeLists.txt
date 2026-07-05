@@ -53,7 +53,9 @@ set(QHW_ADM_CORE_SOURCES
     src/qhw_estimator.c
     src/qhw_math.c
     src/qhw_metadata.c
+    src/qhw_policy.c
     src/qhw_registry.c
+    src/qhw_reservation.c
     src/qhw_thread.c
     src/estimators/baseline.c)
 
@@ -111,6 +113,18 @@ if(QHW_ADM_BUILD_TESTS)
         "QHW_ADM_TEST_PLUGIN_DIR=\"$<TARGET_FILE_DIR:qhw_adm_estimator_mock>\"")
     add_test(NAME test_estimator COMMAND test_estimator)
 
+    add_executable(test_policy tests/c/test_policy.c)
+    target_include_directories(test_policy
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_policy PRIVATE
+        qhw_admission
+        qhw_datastructures)
+    target_compile_definitions(test_policy PRIVATE
+        "QHW_ADM_TEST_POLICY_PATH=\"$<TARGET_FILE:qhw_adm_mock>\""
+        "QHW_ADM_TEST_POLICY_DIR=\"$<TARGET_FILE_DIR:qhw_adm_mock>\"")
+    add_test(NAME test_policy COMMAND test_policy)
+
     add_library(qhw_adm_estimator_mock MODULE
         tests/plugins/qhw_adm_estimator_mock.c)
     target_include_directories(qhw_adm_estimator_mock
@@ -125,6 +139,20 @@ if(QHW_ADM_BUILD_TESTS)
         LIBRARY_OUTPUT_DIRECTORY
             ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
     add_dependencies(test_estimator qhw_adm_estimator_mock)
+
+    add_library(qhw_adm_mock MODULE tests/plugins/qhw_adm_mock.c)
+    target_include_directories(qhw_adm_mock
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_mock PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_mock PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+    add_dependencies(test_policy qhw_adm_mock)
 endif()
 
 install(
@@ -258,4 +286,13 @@ if(QHW_ADM_BUILD_PYTHON AND QHW_ADM_BUILD_TESTS)
             ${Python3_EXECUTABLE}
             -S
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_estimator.py)
+    add_test(
+        NAME test_python_policy
+        COMMAND
+            ${CMAKE_COMMAND} -E env
+            PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python
+            QHW_ADM_TEST_POLICY_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-plugins
+            ${Python3_EXECUTABLE}
+            -S
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_policy.py)
 endif()

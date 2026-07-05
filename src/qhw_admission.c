@@ -25,6 +25,7 @@ static void qhw_adm_cleanup(qhw_adm_t *ctx)
 
 	qhw_adm_fini_registries(ctx);
 	qhw_adm_free_estimator_paths(ctx);
+	qhw_adm_free_policy_paths(ctx);
 	qhw_adm_free_metadata_count(ctx->options, ctx->option_count);
 	free(ctx);
 }
@@ -53,6 +54,7 @@ qhw_adm_rc_t qhw_adm_create(
 	}
 
 	ctx->threading = qhw_adm_default_threading(attr);
+	ctx->next_reservation_id = 1;
 
 	if (attr != NULL && attr->option_count > 0) {
 		rc = qhw_adm_copy_metadata(

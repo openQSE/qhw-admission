@@ -1,6 +1,7 @@
 #include "qhw_admission_internal.h"
 
 #include <stdint.h>
+#include <time.h>
 
 qhw_adm_rc_t qhw_adm_add_u64(uint64_t a, uint64_t b, uint64_t *out)
 {
@@ -48,4 +49,16 @@ qhw_adm_rc_t qhw_adm_ceil_div_u64(uint64_t a, uint64_t b, uint64_t *out)
 
 	*out = quotient;
 	return QHW_ADM_OK;
+}
+
+uint64_t qhw_adm_now_ns(void)
+{
+	struct timespec ts;
+
+	if (timespec_get(&ts, TIME_UTC) != TIME_UTC) {
+		return 0;
+	}
+
+	return (uint64_t)ts.tv_sec * UINT64_C(1000000000) +
+		(uint64_t)ts.tv_nsec;
 }

@@ -534,6 +534,11 @@ qhw_adm_rc_t qhw_adm_set_estimator(
 		qhw_adm_unlock(ctx);
 		return QHW_ADM_ERR_NOT_FOUND;
 	}
+	if (qhw_adm_device_has_active_reservation(ctx, device_id)) {
+		qhw_adm_set_error(ctx, "device has active reservations");
+		qhw_adm_unlock(ctx);
+		return QHW_ADM_ERR_STATE;
+	}
 
 	rc = qhw_adm_find_or_load_estimator(
 		ctx,

@@ -57,6 +57,9 @@ static void qhw_adm_free_device_contents(
 	if (entry->estimator != NULL && entry->estimator->destroy != NULL) {
 		entry->estimator->destroy(entry->estimator_state);
 	}
+	if (entry->policy != NULL && entry->policy->destroy != NULL) {
+		entry->policy->destroy(entry->policy_state);
+	}
 
 	qhw_adm_free_metadata_count(
 		entry->metadata,
@@ -172,12 +175,25 @@ qhw_adm_rc_t qhw_adm_clone_device_entry(
 	entry->profile_version = src->profile_version;
 	entry->estimator = src->estimator;
 	entry->estimator_version = src->estimator_version;
+	entry->policy = src->policy;
+	entry->policy_version = src->policy_version;
 	if (entry->estimator != NULL && entry->estimator->init != NULL) {
 		rc = entry->estimator->init(
 			&entry->profile,
 			NULL,
 			0,
 			&entry->estimator_state);
+		if (rc != QHW_ADM_OK) {
+			qhw_adm_free_device_entry(entry, NULL);
+			return rc;
+		}
+	}
+	if (entry->policy != NULL && entry->policy->init != NULL) {
+		rc = entry->policy->init(
+			&entry->profile,
+			NULL,
+			0,
+			&entry->policy_state);
 		if (rc != QHW_ADM_OK) {
 			qhw_adm_free_device_entry(entry, NULL);
 			return rc;
@@ -213,6 +229,14 @@ qhw_adm_rc_t qhw_adm_register_device(
 
 	entry = qhw_hash_table_find(&ctx->devices, profile->device_id);
 	if (entry != NULL) {
+		if (qhw_adm_device_has_active_reservation(
+			ctx,
+			profile->device_id)) {
+			qhw_adm_free_device_entry(new_entry, NULL);
+			qhw_adm_set_error(ctx, "device has active reservations");
+			qhw_adm_unlock(ctx);
+			return QHW_ADM_ERR_STATE;
+		}
 		qhw_adm_replace_device_entry(entry, new_entry);
 		qhw_adm_clear_error(ctx);
 		qhw_adm_unlock(ctx);
@@ -248,12 +272,18 @@ qhw_adm_rc_t qhw_adm_unregister_device(qhw_adm_t *ctx, uint64_t device_id)
 		return rc;
 	}
 
-	entry = qhw_hash_table_remove(&ctx->devices, device_id);
+	entry = qhw_hash_table_find(&ctx->devices, device_id);
 	if (entry == NULL) {
 		qhw_adm_set_error(ctx, "device was not found");
 		qhw_adm_unlock(ctx);
 		return QHW_ADM_ERR_NOT_FOUND;
 	}
+	if (qhw_adm_device_has_active_reservation(ctx, device_id)) {
+		qhw_adm_set_error(ctx, "device has active reservations");
+		qhw_adm_unlock(ctx);
+		return QHW_ADM_ERR_STATE;
+	}
+	entry = qhw_hash_table_remove(&ctx->devices, device_id);
 
 	qhw_adm_clear_error(ctx);
 	qhw_adm_unlock(ctx);
@@ -315,6 +345,11 @@ qhw_adm_rc_t qhw_adm_set_baseline(
 		qhw_adm_set_error(ctx, "device was not found");
 		qhw_adm_unlock(ctx);
 		return QHW_ADM_ERR_NOT_FOUND;
+	}
+	if (qhw_adm_device_has_active_reservation(ctx, device_id)) {
+		qhw_adm_set_error(ctx, "device has active reservations");
+		qhw_adm_unlock(ctx);
+		return QHW_ADM_ERR_STATE;
 	}
 
 	if (baseline->qubit_count > entry->profile.max_qubits ||
