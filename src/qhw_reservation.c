@@ -427,6 +427,34 @@ static qhw_adm_rc_t build_capacity_view(
 	return QHW_ADM_OK;
 }
 
+static qhw_adm_rc_t apply_policy_capacity(
+	struct qhw_adm_device_entry *entry,
+	const qhw_adm_capacity_view_t *core_view,
+	qhw_adm_capacity_view_t *out_capacity)
+{
+	qhw_adm_capacity_view_t decorated;
+
+	if (entry == NULL || core_view == NULL || out_capacity == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if (entry->policy == NULL || entry->policy->capacity == NULL) {
+		*out_capacity = *core_view;
+		return QHW_ADM_OK;
+	}
+
+	decorated = *core_view;
+	if (entry->policy->capacity(
+		entry->policy_state,
+		&entry->profile,
+		core_view,
+		&decorated) != QHW_ADM_OK) {
+		return QHW_ADM_ERR_POLICY;
+	}
+
+	*out_capacity = decorated;
+	return QHW_ADM_OK;
+}
+
 static void fill_rejected_decision(
 	qhw_adm_decision_t *decision,
 	const qhw_adm_request_t *request,
@@ -556,6 +584,14 @@ static qhw_adm_rc_t prepare_policy_call(
 		entry,
 		request->scope_id,
 		out_capacity);
+	if (rc != QHW_ADM_OK) {
+		fill_rejected_decision(
+			out_decision,
+			request,
+			QHW_ADM_REASON_POLICY_FAILED);
+		return rc;
+	}
+	rc = apply_policy_capacity(entry, out_capacity, out_capacity);
 	if (rc != QHW_ADM_OK) {
 		fill_rejected_decision(
 			out_decision,
@@ -983,16 +1019,8 @@ qhw_adm_rc_t qhw_adm_get_capacity(
 	}
 
 	rc = build_capacity_view(ctx, entry, scope_id, &capacity);
-	if (rc == QHW_ADM_OK && entry->policy != NULL &&
-	    entry->policy->capacity != NULL) {
-		qhw_adm_capacity_view_t decorated = capacity;
-
-		rc = entry->policy->capacity(
-			entry->policy_state,
-			&entry->profile,
-			&capacity,
-			&decorated);
-		capacity = decorated;
+	if (rc == QHW_ADM_OK) {
+		rc = apply_policy_capacity(entry, &capacity, &capacity);
 	}
 	if (rc != QHW_ADM_OK) {
 		qhw_adm_set_error(ctx, "failed to build capacity view");

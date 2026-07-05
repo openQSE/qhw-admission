@@ -1657,6 +1657,18 @@ typedef enum qhw_adm_reason {
 } qhw_adm_reason_t;
 ```
 
+The standard credit policy uses these option keys when the caller configures
+the policy through `qhw_adm_set_policy()` or YAML `policy.options`:
+
+```c
+typedef enum qhw_adm_option_key {
+	QHW_ADM_OPT_CREDIT_RESERVATION_TTL_NS = 1001,
+	QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT = 1002,
+	QHW_ADM_OPT_CREDIT_OVERCOMMIT_CREDITS = 1003,
+	QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM = 1004
+} qhw_adm_option_key_t;
+```
+
 ### Public Handles
 
 ```c

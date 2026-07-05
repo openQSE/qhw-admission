@@ -503,6 +503,22 @@ static uint64_t metadata_key_from_name(const char *key)
 		{ "consumed_rate", QHW_ADM_META_CONSUMED_RATE },
 		{ "unused_capacity", QHW_ADM_META_UNUSED_CAPACITY },
 		{ "over_limit_events", QHW_ADM_META_OVER_LIMIT_EVENTS },
+		{
+			"reservation_ttl_ns",
+			QHW_ADM_OPT_CREDIT_RESERVATION_TTL_NS
+		},
+		{
+			"allow_overcommit",
+			QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT
+		},
+		{
+			"overcommit_credits",
+			QHW_ADM_OPT_CREDIT_OVERCOMMIT_CREDITS
+		},
+		{
+			"overcommit_ppm",
+			QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM
+		},
 	};
 	size_t i;
 
