@@ -675,7 +675,7 @@ credit and rate policies.
 | `queued_baseline_units` | `uint64_t` | Queued work expressed in baseline units. |
 | `queued_estimated_ns` | `uint64_t` | Queued work expressed as estimated device time. |
 | `active_reservation_count` | `uint64_t` | Number of active reservations that hold capacity on the device. |
-| `total_credits` | `uint64_t` | Total credit capacity configured for the device. |
+| `total_credits` | `uint64_t` | Total credit capacity available to the credit policy. This value is either configured directly or derived from the baseline circuit and accounting window. |
 | `credits_reserved` | `uint64_t` | Device-wide credits reserved in the core ledger. |
 | `credits_consumed` | `uint64_t` | Device-wide credits consumed in the core ledger. |
 | `credits_returned` | `uint64_t` | Device-wide credits returned in the core ledger. |
@@ -755,7 +755,7 @@ requests can target the device.
 |---|---|---|
 | `struct_size` | `size_t` | Size of the structure supplied by the caller. |
 | `device_id` | `uint64_t` | Local numeric device identifier. |
-| `time_span_ns` | `uint64_t` | Accounting window for rate calculations. |
+| `time_span_ns` | `uint64_t` | Accounting window used to derive credit capacity and rate capacity when explicit values are not configured. |
 | `baseline` | `qhw_adm_baseline_t` | Baseline circuit shape. |
 | `max_qubits` | `uint32_t` | Maximum supported qubit count. |
 | `max_shots` | `uint64_t` | Maximum shots per task, if known. |
@@ -768,12 +768,26 @@ requests can target the device.
 | `compile_ns` | `uint64_t` | Default compile or lowering cost for a request. |
 | `control_overhead_ns` | `uint64_t` | Default control-system setup overhead. |
 | `provider_overhead_ns` | `uint64_t` | Default provider-side fixed overhead. |
-| `total_credits` | `uint64_t` | Total credit capacity for credit policy. |
+| `total_credits` | `uint64_t` | Explicit credit capacity for the credit policy. A zero value asks the core to derive credit capacity from `time_span_ns` and the baseline estimate. |
 | `device_rate` | `uint64_t` | Baseline units per time span for rate policy. |
 | `concurrent_jobs` | `uint32_t` | Target concurrency for rate-slice defaults. |
 | `default_ttl_ns` | `uint64_t` | Default reservation lease duration when the request does not provide one. |
 | `metadata` | `const qhw_adm_kv_t *` | Device-specific values used by estimators or policies. |
 | `metadata_count` | `size_t` | Number of metadata entries. |
+
+If `total_credits` is zero, the core derives credit capacity while constructing
+`qhw_adm_capacity_view_t`. The selected estimator computes the time required
+for the registered baseline circuit. The core then counts how many complete
+baseline units fit in `time_span_ns`:
+
+```text
+estimated_baseline_ns = estimator(device_profile, baseline_circuit)
+total_credits = floor(time_span_ns / estimated_baseline_ns)
+```
+
+An explicit nonzero `total_credits` takes precedence over the derived value.
+The derived value must be greater than zero for the credit policy to admit
+work.
 
 If `device_rate` is zero, the core derives it while constructing
 `qhw_adm_capacity_view_t`. The core uses the selected estimator, the registered
@@ -1271,16 +1285,36 @@ Configuration:
 
 | Field | Meaning |
 |---|---|
-| `total_credits` | Total credits available on the device. |
+| `total_credits` | Optional explicit credit capacity for the device. Nonzero values take precedence over derived capacity. |
+| `time_span_ns` | Accounting window used to derive credit capacity when `total_credits` is zero. |
+| baseline circuit | Reference circuit shape that defines one credit unit. |
+| estimator | Resource estimator used to compute the baseline execution time and request execution time. |
 | `reservation_ttl_ns` | Policy default used to fill `qhw_adm_policy_grant_t.ttl_ns` for accepted reservations. |
 | `allow_overcommit` | Enable bounded overcommit for testing or explicit site policy. |
 | `overcommit_credits` | Maximum credits that can be admitted beyond `total_credits` when overcommit is enabled. |
 | `overcommit_ppm` | Optional overcommit limit as parts per million of `total_credits`. |
 
+Credit capacity is selected before policy evaluation:
+
+```text
+if device_profile.total_credits != 0:
+  total_credits = device_profile.total_credits
+else:
+  estimated_baseline_ns =
+    estimator(device_profile, device_profile.baseline)
+  total_credits =
+    floor(device_profile.time_span_ns / estimated_baseline_ns)
+```
+
+The baseline circuit defines the accounting unit. The estimator maps that unit
+to device time using the registered device profile and estimator-specific
+metadata. The timing window determines how many complete baseline units fit in
+one admission accounting window.
+
 Credit demand is:
 
 ```text
-credits_required = ceil(estimated_total_ns / estimated_baseline_ns)
+credits_required = estimated_request_baseline_units
 scoped_external_credit_remaining =
   unbounded if external_credit_limit == 0
   else max(0, external_credit_limit - scoped_reserved_credits)
@@ -2461,6 +2495,12 @@ accounting paths, and richer wrappers.
 ### Phase 5: Credit Policy
 
 - Implement finite credit-budget configuration and validation.
+- Use explicit `total_credits` when the device profile provides a nonzero
+  value.
+- Derive `total_credits` from the selected estimator, baseline circuit, and
+  `time_span_ns` when the device profile does not provide explicit credits.
+- Reject credit admission when neither explicit credits nor a valid derived
+  credit capacity is available.
 - Track total, reserved, consumed, returned, and available credits per device.
 - Convert request estimates into required credits through the configured
   baseline-unit or timing rule.
@@ -2469,16 +2509,19 @@ accounting paths, and richer wrappers.
 - Reserve credits atomically when `reserve()` succeeds.
 - Return credits on release, cancellation, and expiration through the common
   reservation lifecycle path.
-- Implement policy hooks needed by the common usage-accounting APIs.
+- Provide policy hooks used by the common usage-accounting APIs introduced in
+  the controller-driven usage-accounting phase.
 - Add C tests for exact-fit admission, insufficient credits, oversized
-  requests, bounded overcommit, overcommit disabled behavior, overcommit limit
-  rejection, release return, cancellation return, expiration return, usage
-  consumption, returned usage, over-limit usage, and invalid configuration.
+  requests, derived credit capacity, explicit credit override, bounded
+  overcommit, overcommit disabled behavior, overcommit limit rejection,
+  release return, cancellation return, expiration return, and invalid
+  configuration.
 - Add Python tests for credit configuration, accepted decisions, delayed
-  decisions, rejected decisions, release return, expiration return, and
-  over-limit reporting.
+  decisions, rejected decisions, derived credit capacity, explicit credit
+  override, release return, and expiration return.
 - Validate the phase with C and Python tests that reserve finite credits,
-  reject an oversized request, release capacity, and admit a later request.
+  derive finite credits, reject an oversized request, release capacity, and
+  admit a later request.
 
 ### Phase 6: Rate Policy
 

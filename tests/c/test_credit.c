@@ -52,6 +52,17 @@ static qhw_adm_device_profile_t make_profile(uint64_t total_credits)
 	return profile;
 }
 
+static qhw_adm_device_profile_t make_profile_with_window(
+	uint64_t total_credits,
+	uint64_t time_span_ns)
+{
+	qhw_adm_device_profile_t profile;
+
+	profile = make_profile(total_credits);
+	profile.time_span_ns = time_span_ns;
+	return profile;
+}
+
 static qhw_adm_qtask_class_t make_task(uint64_t count)
 {
 	qhw_adm_qtask_class_t task = {
@@ -147,6 +158,24 @@ static int setup_context(
 	return 0;
 }
 
+static int setup_context_with_profile(
+	const qhw_adm_device_profile_t *profile,
+	const qhw_adm_kv_t *options,
+	size_t option_count,
+	qhw_adm_t **out_ctx)
+{
+	qhw_adm_t *ctx = NULL;
+
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_register_device(ctx, profile) == QHW_ADM_OK);
+	CHECK(qhw_adm_add_policy_path(ctx, QHW_ADM_TEST_CREDIT_DIR) ==
+		QHW_ADM_OK);
+	CHECK(qhw_adm_set_policy(ctx, profile->device_id, "credit",
+		options, option_count) == QHW_ADM_OK);
+	*out_ctx = ctx;
+	return 0;
+}
+
 static int test_exact_fit_and_release(void)
 {
 	qhw_adm_t *ctx = NULL;
@@ -178,6 +207,123 @@ static int test_exact_fit_and_release(void)
 		&capacity) == QHW_ADM_OK);
 	CHECK(capacity.credits_reserved == 0);
 	CHECK(capacity.effective_available_credits == 3);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_derived_credit_capacity(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_device_profile_t profile;
+	qhw_adm_qtask_class_t task = make_task(2);
+	qhw_adm_request_t request = make_request(&task, 42);
+	qhw_adm_decision_t decision = make_decision_output();
+	qhw_adm_capacity_view_t capacity = make_capacity_output();
+
+	profile = make_profile_with_window(0, 814650);
+	CHECK(setup_context_with_profile(&profile, NULL, 0, &ctx) == 0);
+	CHECK(qhw_adm_get_capacity(ctx, request.device_id, request.scope_id,
+		&capacity) == QHW_ADM_OK);
+	CHECK(capacity.total_credits == 3);
+	CHECK(capacity.effective_available_credits == 3);
+	CHECK(qhw_adm_reserve(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(decision.credits_required == 3);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_zero_derived_capacity_rejects(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_device_profile_t profile;
+	qhw_adm_qtask_class_t task = make_task(1);
+	qhw_adm_request_t request = make_request(&task, 42);
+	qhw_adm_decision_t decision = make_decision_output();
+	qhw_adm_capacity_view_t capacity = make_capacity_output();
+
+	profile = make_profile_with_window(0, 1);
+	CHECK(setup_context_with_profile(&profile, NULL, 0, &ctx) == 0);
+	CHECK(qhw_adm_get_capacity(ctx, request.device_id, request.scope_id,
+		&capacity) == QHW_ADM_OK);
+	CHECK(capacity.total_credits == 0);
+	CHECK(capacity.effective_available_credits == 0);
+	CHECK(qhw_adm_evaluate(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_REJECTED);
+	CHECK(decision.reason_code == QHW_ADM_REASON_REQUEST_TOO_LARGE);
+	CHECK(decision.capacity_available == 0);
+	CHECK(strcmp(decision.message, "credit capacity is unavailable") == 0);
+
+	decision = make_decision_output();
+	CHECK(qhw_adm_reserve(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_REJECTED);
+	CHECK(decision.reason_code == QHW_ADM_REASON_REQUEST_TOO_LARGE);
+	CHECK(decision.reservation_id == 0);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_explicit_credits_override_derivation(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_device_profile_t profile;
+	qhw_adm_qtask_class_t task = make_task(2);
+	qhw_adm_request_t request = make_request(&task, 42);
+	qhw_adm_decision_t decision = make_decision_output();
+	qhw_adm_capacity_view_t capacity = make_capacity_output();
+
+	profile = make_profile_with_window(5, 814650);
+	CHECK(setup_context_with_profile(&profile, NULL, 0, &ctx) == 0);
+	CHECK(qhw_adm_get_capacity(ctx, request.device_id, request.scope_id,
+		&capacity) == QHW_ADM_OK);
+	CHECK(capacity.total_credits == 5);
+	CHECK(capacity.effective_available_credits == 5);
+	CHECK(qhw_adm_reserve(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_yaml_credits_override_derivation(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_capacity_view_t capacity = make_capacity_output();
+	const char *yaml =
+		"plugin_paths:\n"
+		"  policies: [\"" QHW_ADM_TEST_CREDIT_DIR "\"]\n"
+		"devices:\n"
+		"  - device_id: 7\n"
+		"    max_qubits: 20\n"
+		"    max_shots: 10000\n"
+		"    time_span_ns: 814650\n"
+		"    baseline:\n"
+		"      qubit_count: 4\n"
+		"      depth: 10\n"
+		"      one_q_gate_count: 10\n"
+		"      two_q_gate_count: 5\n"
+		"      shots: 100\n"
+		"      measurement_count: 2\n"
+		"    timing:\n"
+		"      one_q_gate_ns: 20\n"
+		"      two_q_gate_ns: 100\n"
+		"      measurement_ns: 1000\n"
+		"      one_q_gate_transfer_ns: 1\n"
+		"      two_q_gate_transfer_ns: 4\n"
+		"      measurement_transfer_ns: 10\n"
+		"      compile_ns: 1000\n"
+		"      control_overhead_ns: 200\n"
+		"      provider_overhead_ns: 300\n"
+		"    credit:\n"
+		"      total_credits: 5\n"
+		"    policy:\n"
+		"      name: credit\n";
+
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_load_config_string(ctx, yaml, 0,
+		QHW_ADM_CONFIG_MERGE) == QHW_ADM_OK);
+	CHECK(qhw_adm_get_capacity(ctx, 7, 3, &capacity) == QHW_ADM_OK);
+	CHECK(capacity.total_credits == 5);
+	CHECK(capacity.effective_available_credits == 5);
 	qhw_adm_destroy(ctx);
 	return 0;
 }
@@ -306,6 +452,7 @@ static int test_invalid_configuration(void)
 	qhw_adm_t *ctx = NULL;
 	qhw_adm_device_profile_t profile = make_profile(0);
 
+	profile.time_span_ns = 0;
 	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
 	CHECK(qhw_adm_register_device(ctx, &profile) == QHW_ADM_OK);
 	CHECK(qhw_adm_add_policy_path(ctx, QHW_ADM_TEST_CREDIT_DIR) ==
@@ -319,6 +466,10 @@ static int test_invalid_configuration(void)
 int main(void)
 {
 	CHECK(test_exact_fit_and_release() == 0);
+	CHECK(test_derived_credit_capacity() == 0);
+	CHECK(test_zero_derived_capacity_rejects() == 0);
+	CHECK(test_explicit_credits_override_derivation() == 0);
+	CHECK(test_yaml_credits_override_derivation() == 0);
 	CHECK(test_delayed_when_capacity_is_reserved() == 0);
 	CHECK(test_oversized_request_is_rejected() == 0);
 	CHECK(test_bounded_overcommit_accepts_exact_limit() == 0);

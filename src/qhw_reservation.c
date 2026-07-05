@@ -303,6 +303,46 @@ static void accumulate_active_capacity(
 	}
 }
 
+static qhw_adm_rc_t derive_total_credits(
+	struct qhw_adm_device_entry *entry,
+	uint64_t *out_credits)
+{
+	qhw_adm_estimate_t estimate;
+	uint64_t credits;
+	qhw_adm_rc_t rc;
+
+	if (entry == NULL || out_credits == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if (entry->profile.total_credits != 0) {
+		*out_credits = entry->profile.total_credits;
+		return QHW_ADM_OK;
+	}
+	if (entry->profile.time_span_ns == 0) {
+		*out_credits = 0;
+		return QHW_ADM_OK;
+	}
+	if (entry->estimator == NULL ||
+	    entry->estimator->estimate_baseline == NULL) {
+		return QHW_ADM_ERR_ESTIMATOR;
+	}
+
+	memset(&estimate, 0, sizeof(estimate));
+	estimate.struct_size = sizeof(estimate);
+	rc = entry->estimator->estimate_baseline(
+		entry->estimator_state,
+		&entry->profile,
+		&entry->profile.baseline,
+		&estimate);
+	if (rc != QHW_ADM_OK || estimate.total_ns == 0) {
+		return QHW_ADM_ERR_ESTIMATOR;
+	}
+
+	credits = entry->profile.time_span_ns / estimate.total_ns;
+	*out_credits = credits;
+	return QHW_ADM_OK;
+}
+
 static qhw_adm_rc_t derive_total_rate(
 	struct qhw_adm_device_entry *entry,
 	uint64_t *out_rate)
@@ -380,7 +420,10 @@ static qhw_adm_rc_t build_capacity_view(
 	view.next_available_ns = snapshot.next_available_ns;
 	view.queued_baseline_units = snapshot.queued_baseline_units;
 	view.queued_estimated_ns = snapshot.queued_estimated_ns;
-	view.total_credits = entry->profile.total_credits;
+	rc = derive_total_credits(entry, &view.total_credits);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
 	view.external_credit_limit = snapshot.external_credit_limit;
 	view.external_rate_limit = snapshot.external_rate_limit;
 	view.scheduler_policy_id = snapshot.scheduler_policy_id;

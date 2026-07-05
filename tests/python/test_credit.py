@@ -15,7 +15,7 @@ from qhw_admission import (
 )
 
 
-def make_profile(total_credits):
+def make_profile(total_credits, time_span_ns=1_000_000_000):
     baseline = Baseline(
         qubit_count=4,
         depth=10,
@@ -26,7 +26,7 @@ def make_profile(total_credits):
     )
     return DeviceProfile(
         device_id=7,
-        time_span_ns=1_000_000_000,
+        time_span_ns=time_span_ns,
         baseline=baseline,
         max_qubits=20,
         max_shots=10_000,
@@ -100,6 +100,48 @@ class CreditPolicyTests(unittest.TestCase):
             self.assertEqual(reservation.state, RESERVATION_RELEASED)
             capacity = ctx.get_capacity(7, 3)
             self.assertEqual(capacity.credits_reserved, 0)
+            self.assertEqual(capacity.effective_available_credits, 5)
+
+    def test_derived_credit_capacity(self):
+        task = make_task()
+
+        with AdmissionContext() as ctx:
+            ctx.register_device(make_profile(0, time_span_ns=814_650))
+            ctx.add_policy_path(os.environ["QHW_ADM_TEST_CREDIT_DIR"])
+            ctx.set_policy(7, "credit")
+            capacity = ctx.get_capacity(7, 3)
+            self.assertEqual(capacity.total_credits, 3)
+            decision = ctx.reserve(make_request(task, 42))
+            self.assertEqual(decision.decision, DECISION_ACCEPTED)
+            self.assertEqual(decision.credits_required, 3)
+
+    def test_zero_derived_credit_capacity_rejects(self):
+        task = make_task(count=1)
+
+        with AdmissionContext() as ctx:
+            ctx.register_device(make_profile(0, time_span_ns=1))
+            ctx.add_policy_path(os.environ["QHW_ADM_TEST_CREDIT_DIR"])
+            ctx.set_policy(7, "credit")
+            capacity = ctx.get_capacity(7, 3)
+            self.assertEqual(capacity.total_credits, 0)
+            self.assertEqual(capacity.effective_available_credits, 0)
+
+            decision = ctx.evaluate(make_request(task, 42))
+            self.assertEqual(decision.decision, DECISION_REJECTED)
+            self.assertEqual(decision.capacity_available, 0)
+            self.assertEqual(decision.message, "credit capacity is unavailable")
+
+            decision = ctx.reserve(make_request(task, 42))
+            self.assertEqual(decision.decision, DECISION_REJECTED)
+            self.assertEqual(decision.reservation_id, 0)
+
+    def test_explicit_credits_override_derivation(self):
+        with AdmissionContext() as ctx:
+            ctx.register_device(make_profile(5, time_span_ns=814_650))
+            ctx.add_policy_path(os.environ["QHW_ADM_TEST_CREDIT_DIR"])
+            ctx.set_policy(7, "credit")
+            capacity = ctx.get_capacity(7, 3)
+            self.assertEqual(capacity.total_credits, 5)
             self.assertEqual(capacity.effective_available_credits, 5)
 
     def test_rejects_oversized_request(self):

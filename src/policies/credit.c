@@ -8,7 +8,6 @@
 
 struct credit_state {
 	uint64_t reservation_ttl_ns;
-	uint64_t total_credits;
 	uint64_t overcommit_credits;
 	uint64_t overcommit_ppm;
 	int allow_overcommit;
@@ -169,6 +168,7 @@ static qhw_adm_rc_t credit_ppm_value(
 
 static qhw_adm_rc_t credit_overcommit_limit(
 	const struct credit_state *state,
+	uint64_t total_credits,
 	uint64_t *out_limit)
 {
 	uint64_t ppm_limit = 0;
@@ -177,8 +177,11 @@ static qhw_adm_rc_t credit_overcommit_limit(
 	if (state == NULL || out_limit == NULL) {
 		return QHW_ADM_ERR_INVAL;
 	}
+	if (total_credits == 0) {
+		return QHW_ADM_ERR_INVAL;
+	}
 
-	*out_limit = state->total_credits;
+	*out_limit = total_credits;
 	if (!state->allow_overcommit) {
 		return QHW_ADM_OK;
 	}
@@ -187,7 +190,7 @@ static qhw_adm_rc_t credit_overcommit_limit(
 		qhw_adm_rc_t rc;
 
 		rc = credit_ppm_value(
-			state->total_credits,
+			total_credits,
 			state->overcommit_ppm,
 			&ppm_limit);
 		if (rc != QHW_ADM_OK) {
@@ -198,11 +201,11 @@ static qhw_adm_rc_t credit_overcommit_limit(
 	configured = credit_min_nonzero(
 		state->overcommit_credits,
 		ppm_limit);
-	if (UINT64_MAX - state->total_credits < configured) {
+	if (UINT64_MAX - total_credits < configured) {
 		return QHW_ADM_ERR_INVAL;
 	}
 
-	*out_limit = state->total_credits + configured;
+	*out_limit = total_credits + configured;
 	return QHW_ADM_OK;
 }
 
@@ -216,7 +219,7 @@ static qhw_adm_rc_t credit_init(
 	qhw_adm_rc_t rc;
 
 	if (device == NULL || out_state == NULL ||
-	    device->total_credits == 0 ||
+	    (device->total_credits == 0 && device->time_span_ns == 0) ||
 	    (option_count > 0 && options == NULL)) {
 		return QHW_ADM_ERR_INVAL;
 	}
@@ -226,7 +229,6 @@ static qhw_adm_rc_t credit_init(
 		return QHW_ADM_ERR_NOMEM;
 	}
 
-	state->total_credits = device->total_credits;
 	rc = credit_configure_state(state, options, option_count);
 	if (rc != QHW_ADM_OK) {
 		free(state);
@@ -311,11 +313,6 @@ static qhw_adm_rc_t credit_fill_decision(
 	size_t struct_size;
 	qhw_adm_rc_t rc;
 
-	rc = credit_overcommit_limit(state, &effective_limit);
-	if (rc != QHW_ADM_OK) {
-		return rc;
-	}
-
 	credits_required = estimate->baseline_units;
 	struct_size = out_decision->struct_size;
 	memset(out_decision, 0, sizeof(*out_decision));
@@ -328,6 +325,22 @@ static qhw_adm_rc_t credit_fill_decision(
 	out_decision->estimated_total_ns = estimate->total_ns;
 	out_decision->capacity_granted = credits_required;
 	out_decision->confidence_ppm = estimate->confidence_ppm;
+
+	if (capacity->total_credits == 0) {
+		out_decision->decision = QHW_ADM_DECISION_REJECTED;
+		out_decision->reason_code = QHW_ADM_REASON_REQUEST_TOO_LARGE;
+		out_decision->compliance_action = QHW_ADM_COMPLIANCE_REJECT;
+		out_decision->message = "credit capacity is unavailable";
+		return QHW_ADM_OK;
+	}
+
+	rc = credit_overcommit_limit(
+		state,
+		capacity->total_credits,
+		&effective_limit);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
 
 	if (credits_required > effective_limit) {
 		out_decision->decision = QHW_ADM_DECISION_REJECTED;
@@ -536,12 +549,21 @@ static qhw_adm_rc_t credit_capacity(
 		return QHW_ADM_ERR_INVAL;
 	}
 
-	rc = credit_overcommit_limit(credit, &effective_limit);
+	*out_capacity = *core_view;
+	if (core_view->total_credits == 0) {
+		out_capacity->core_available_credits = 0;
+		out_capacity->effective_available_credits = 0;
+		return QHW_ADM_OK;
+	}
+
+	rc = credit_overcommit_limit(
+		credit,
+		core_view->total_credits,
+		&effective_limit);
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
 
-	*out_capacity = *core_view;
 	out_capacity->core_available_credits = credit_saturating_sub(
 		effective_limit,
 		core_view->credits_reserved);
