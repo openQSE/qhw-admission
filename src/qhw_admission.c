@@ -24,6 +24,7 @@ static void qhw_adm_cleanup(qhw_adm_t *ctx)
 	}
 
 	qhw_adm_fini_registries(ctx);
+	qhw_adm_free_estimator_paths(ctx);
 	qhw_adm_free_metadata_count(ctx->options, ctx->option_count);
 	free(ctx);
 }
@@ -66,6 +67,12 @@ qhw_adm_rc_t qhw_adm_create(
 	}
 
 	rc = qhw_adm_init_registries(ctx);
+	if (rc != QHW_ADM_OK) {
+		qhw_adm_cleanup(ctx);
+		return rc;
+	}
+
+	rc = qhw_adm_register_builtin_estimators(ctx);
 	if (rc != QHW_ADM_OK) {
 		qhw_adm_cleanup(ctx);
 		return rc;

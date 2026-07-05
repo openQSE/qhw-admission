@@ -13,6 +13,9 @@ extern "C" {
 typedef struct qhw_adm qhw_adm_t;
 typedef struct qhw_adm_policy qhw_adm_policy_t;
 typedef struct qhw_adm_estimator qhw_adm_estimator_t;
+typedef struct qhw_adm_request qhw_adm_request_t;
+typedef struct qhw_adm_reservation qhw_adm_reservation_t;
+typedef struct qhw_adm_actual_usage qhw_adm_actual_usage_t;
 
 typedef enum qhw_adm_rc {
 	QHW_ADM_OK = 0,
@@ -30,6 +33,18 @@ typedef enum qhw_adm_threading {
 	QHW_ADM_THREAD_USER = 0,
 	QHW_ADM_THREAD_SAFE = 1
 } qhw_adm_threading_t;
+
+typedef enum qhw_adm_device_state {
+	QHW_ADM_DEVICE_AVAILABLE = 1,
+	QHW_ADM_DEVICE_UNAVAILABLE = 2,
+	QHW_ADM_DEVICE_DRAINING = 3,
+	QHW_ADM_DEVICE_MAINTENANCE = 4
+} qhw_adm_device_state_t;
+
+typedef enum qhw_adm_workload_kind {
+	QHW_ADM_WORKLOAD_QUANTUM_JOB = 1,
+	QHW_ADM_WORKLOAD_HYBRID_JOB = 2
+} qhw_adm_workload_kind_t;
 
 typedef enum qhw_adm_value_type {
 	QHW_ADM_VALUE_U64 = 1,
@@ -126,6 +141,128 @@ typedef struct qhw_adm_attr {
 	const qhw_adm_kv_t *options;
 	size_t option_count;
 } qhw_adm_attr_t;
+
+typedef struct qhw_adm_baseline {
+	size_t struct_size;
+	uint32_t qubit_count;
+	uint64_t depth;
+	uint64_t one_q_gate_count;
+	uint64_t two_q_gate_count;
+	uint64_t shots;
+	uint64_t measurement_count;
+} qhw_adm_baseline_t;
+
+typedef struct qhw_adm_device_profile {
+	size_t struct_size;
+	uint64_t device_id;
+	uint64_t time_span_ns;
+	qhw_adm_baseline_t baseline;
+	uint32_t max_qubits;
+	uint64_t max_shots;
+	uint64_t one_q_gate_ns;
+	uint64_t two_q_gate_ns;
+	uint64_t measurement_ns;
+	uint64_t one_q_gate_transfer_ns;
+	uint64_t two_q_gate_transfer_ns;
+	uint64_t measurement_transfer_ns;
+	uint64_t compile_ns;
+	uint64_t control_overhead_ns;
+	uint64_t provider_overhead_ns;
+	uint64_t total_credits;
+	uint64_t device_rate;
+	uint32_t concurrent_jobs;
+	uint64_t default_ttl_ns;
+	const qhw_adm_kv_t *metadata;
+	size_t metadata_count;
+} qhw_adm_device_profile_t;
+
+typedef struct qhw_adm_qtask_class {
+	size_t struct_size;
+	uint64_t class_id;
+	uint64_t count;
+	uint32_t qubit_count;
+	uint64_t depth;
+	uint64_t one_q_gate_count;
+	uint64_t two_q_gate_count;
+	uint64_t shots;
+	uint64_t measurement_count;
+	const qhw_adm_kv_t *metadata;
+	size_t metadata_count;
+} qhw_adm_qtask_class_t;
+
+typedef struct qhw_adm_estimate {
+	size_t struct_size;
+	uint64_t execution_ns;
+	uint64_t measurement_ns;
+	uint64_t compile_ns;
+	uint64_t transfer_ns;
+	uint64_t control_overhead_ns;
+	uint64_t total_ns;
+	uint64_t baseline_units;
+	uint32_t confidence_ppm;
+} qhw_adm_estimate_t;
+
+typedef struct qhw_adm_estimator_desc qhw_adm_estimator_desc_t;
+
+typedef const qhw_adm_estimator_desc_t *(
+	*qhw_adm_estimator_plugin_fn)(void);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_init_fn)(
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_kv_t *options,
+	size_t option_count,
+	void **out_state);
+
+typedef void (*qhw_adm_estimator_destroy_fn)(void *state);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_configure_fn)(
+	void *state,
+	const qhw_adm_kv_t *options,
+	size_t option_count);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_estimate_task_fn)(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_qtask_class_t *task_class,
+	qhw_adm_estimate_t *out_estimate);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_estimate_request_fn)(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_request_t *request,
+	qhw_adm_estimate_t *out_estimate);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_estimate_baseline_fn)(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_baseline_t *baseline,
+	qhw_adm_estimate_t *out_estimate);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_validate_request_fn)(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_request_t *request);
+
+typedef qhw_adm_rc_t (*qhw_adm_estimator_record_actual_fn)(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_reservation_t *reservation,
+	const qhw_adm_actual_usage_t *actual);
+
+struct qhw_adm_estimator_desc {
+	size_t struct_size;
+	uint32_t abi_version;
+	const char *name;
+	uint64_t capabilities;
+	qhw_adm_estimator_init_fn init;
+	qhw_adm_estimator_destroy_fn destroy;
+	qhw_adm_estimator_configure_fn configure;
+	qhw_adm_estimator_estimate_task_fn estimate_task;
+	qhw_adm_estimator_estimate_request_fn estimate_request;
+	qhw_adm_estimator_estimate_baseline_fn estimate_baseline;
+	qhw_adm_estimator_validate_request_fn validate_request;
+	qhw_adm_estimator_record_actual_fn record_actual;
+};
 
 #ifdef __cplusplus
 }

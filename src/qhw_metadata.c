@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static char *qhw_adm_strdup(const char *src)
+char *qhw_adm_strdup(const char *src)
 {
 	size_t len;
 	char *copy;
@@ -107,4 +107,41 @@ void qhw_adm_free_metadata_count(qhw_adm_kv_t *metadata, size_t count)
 	}
 
 	free(metadata);
+}
+
+qhw_adm_rc_t qhw_adm_metadata_get_u64(
+	const qhw_adm_kv_t *metadata,
+	size_t count,
+	uint64_t key,
+	uint64_t fallback,
+	uint64_t *out_value)
+{
+	size_t i;
+
+	if (out_value == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	*out_value = fallback;
+
+	if (count == 0) {
+		return QHW_ADM_OK;
+	}
+
+	if (metadata == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (metadata[i].key != key) {
+			continue;
+		}
+		if (metadata[i].value.type != QHW_ADM_VALUE_U64) {
+			return QHW_ADM_ERR_INVAL;
+		}
+		*out_value = metadata[i].value.value.u64;
+		return QHW_ADM_OK;
+	}
+
+	return QHW_ADM_OK;
 }

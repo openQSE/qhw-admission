@@ -54,9 +54,12 @@ void qhw_adm_fini_registries(qhw_adm_t *ctx)
 		return;
 	}
 
-	qhw_hash_table_fini(&ctx->estimators, NULL, NULL);
 	qhw_hash_table_fini(&ctx->policies, NULL, NULL);
 	qhw_hash_table_fini(&ctx->reservations, NULL, NULL);
-	qhw_hash_table_fini(&ctx->devices, NULL, NULL);
+	qhw_hash_table_fini(&ctx->devices, qhw_adm_free_device_entry, NULL);
+	qhw_hash_table_fini(
+		&ctx->estimators,
+		qhw_adm_free_estimator_entry,
+		NULL);
 	ctx->registries_initialized = 0;
 }

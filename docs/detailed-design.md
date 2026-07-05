@@ -1910,6 +1910,28 @@ device policy or estimator version. Reservations store the versions used at
 admission time, and lifecycle or usage accounting validates that the reservation
 continues to refer to those stored instances.
 
+### Estimation APIs
+
+```c
+qhw_adm_rc_t qhw_adm_estimate_qtask_class(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	const qhw_adm_qtask_class_t *task_class,
+	qhw_adm_estimate_t *out_estimate);
+
+qhw_adm_rc_t qhw_adm_estimate_baseline(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	qhw_adm_estimate_t *out_estimate);
+```
+
+`qhw_adm_estimate_qtask_class()` estimates one qtask class using the
+estimator selected for the target device. The qtask class `count` field is
+applied as repeated work with the same shape. `qhw_adm_estimate_baseline()`
+estimates the registered baseline shape for the device. These APIs provide
+direct visibility into estimator behavior before admission policies consume the
+same estimates during reservation evaluation.
+
 ### Capacity Provider APIs
 
 ```c

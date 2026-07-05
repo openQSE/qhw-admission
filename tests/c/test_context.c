@@ -29,7 +29,7 @@ static int test_default_create(void)
 	CHECK(ctx->devices.count == 0);
 	CHECK(ctx->reservations.count == 0);
 	CHECK(ctx->policies.count == 0);
-	CHECK(ctx->estimators.count == 0);
+	CHECK(ctx->estimators.count == 1);
 	CHECK(strcmp(qhw_adm_last_error(ctx), "") == 0);
 	qhw_adm_destroy(ctx);
 	return 0;

@@ -47,10 +47,15 @@ endif()
 
 set(QHW_ADM_CORE_SOURCES
     src/qhw_admission.c
+    src/qhw_config.c
+    src/qhw_device.c
     src/qhw_error.c
+    src/qhw_estimator.c
+    src/qhw_math.c
     src/qhw_metadata.c
     src/qhw_registry.c
-    src/qhw_thread.c)
+    src/qhw_thread.c
+    src/estimators/baseline.c)
 
 add_library(qhw_admission SHARED ${QHW_ADM_CORE_SOURCES})
 target_include_directories(qhw_admission
@@ -61,7 +66,7 @@ target_include_directories(qhw_admission
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(qhw_admission PRIVATE qhw_datastructures)
 if(UNIX)
-    target_link_libraries(qhw_admission PRIVATE pthread)
+    target_link_libraries(qhw_admission PRIVATE pthread ${CMAKE_DL_LIBS})
 endif()
 target_compile_options(qhw_admission PRIVATE
     -Wall
@@ -93,6 +98,33 @@ if(QHW_ADM_BUILD_TESTS)
         qhw_admission
         qhw_datastructures)
     add_test(NAME test_context COMMAND test_context)
+
+    add_executable(test_estimator tests/c/test_estimator.c)
+    target_include_directories(test_estimator
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_estimator PRIVATE
+        qhw_admission
+        qhw_datastructures)
+    target_compile_definitions(test_estimator PRIVATE
+        "QHW_ADM_TEST_PLUGIN_PATH=\"$<TARGET_FILE:qhw_adm_estimator_mock>\""
+        "QHW_ADM_TEST_PLUGIN_DIR=\"$<TARGET_FILE_DIR:qhw_adm_estimator_mock>\"")
+    add_test(NAME test_estimator COMMAND test_estimator)
+
+    add_library(qhw_adm_estimator_mock MODULE
+        tests/plugins/qhw_adm_estimator_mock.c)
+    target_include_directories(qhw_adm_estimator_mock
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_estimator_mock PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_estimator_mock PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+    add_dependencies(test_estimator qhw_adm_estimator_mock)
 endif()
 
 install(
@@ -218,4 +250,12 @@ if(QHW_ADM_BUILD_PYTHON AND QHW_ADM_BUILD_TESTS)
             ${Python3_EXECUTABLE}
             -S
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_context.py)
+    add_test(
+        NAME test_python_estimator
+        COMMAND
+            ${CMAKE_COMMAND} -E env
+            PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python
+            ${Python3_EXECUTABLE}
+            -S
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_estimator.py)
 endif()
