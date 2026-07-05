@@ -115,6 +115,18 @@ if(QHW_ADM_BUILD_PLUGINS)
     set_target_properties(qhw_adm_credit PROPERTIES
         PREFIX ""
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/policies)
+
+    add_library(qhw_adm_rate MODULE src/policies/rate.c)
+    target_include_directories(qhw_adm_rate
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_rate PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_rate PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/policies)
 endif()
 
 if(QHW_ADM_BUILD_TESTS)
@@ -181,6 +193,18 @@ if(QHW_ADM_BUILD_TESTS)
             "QHW_ADM_TEST_CREDIT_DIR=\"$<TARGET_FILE_DIR:qhw_adm_credit>\"")
         add_dependencies(test_credit qhw_adm_credit)
         add_test(NAME test_credit COMMAND test_credit)
+
+        add_executable(test_rate tests/c/test_rate.c)
+        target_include_directories(test_rate
+            PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(test_rate PRIVATE
+            qhw_admission
+            qhw_datastructures)
+        target_compile_definitions(test_rate PRIVATE
+            "QHW_ADM_TEST_RATE_DIR=\"$<TARGET_FILE_DIR:qhw_adm_rate>\"")
+        add_dependencies(test_rate qhw_adm_rate)
+        add_test(NAME test_rate COMMAND test_rate)
     endif()
 
     add_library(qhw_adm_estimator_mock MODULE
@@ -272,6 +296,9 @@ if(QHW_ADM_BUILD_PLUGINS AND QHW_ADM_INSTALL_PLUGINS)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/qhw_admission/policies)
     install(
         TARGETS qhw_adm_credit
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/qhw_admission/policies)
+    install(
+        TARGETS qhw_adm_rate
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/qhw_admission/policies)
 endif()
 
@@ -423,5 +450,14 @@ if(QHW_ADM_BUILD_PYTHON AND QHW_ADM_BUILD_TESTS)
                 ${Python3_EXECUTABLE}
                 -S
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_credit.py)
+        add_test(
+            NAME test_python_rate
+            COMMAND
+                ${CMAKE_COMMAND} -E env
+                PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python
+                QHW_ADM_TEST_RATE_DIR=${CMAKE_CURRENT_BINARY_DIR}/policies
+                ${Python3_EXECUTABLE}
+                -S
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rate.py)
     endif()
 endif()

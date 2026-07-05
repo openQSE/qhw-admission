@@ -1384,6 +1384,11 @@ Configuration:
 | `rate_slice` | Minimum allocatable rate unit. |
 | `reservation_ttl_ns` | Policy default used to fill `qhw_adm_policy_grant_t.ttl_ns` for accepted reservations. |
 
+The C option key for an explicit slice is `QHW_ADM_OPT_RATE_SLICE`. The YAML
+key is `policy.options.rate_slice`. The C option key for the policy TTL is
+`QHW_ADM_OPT_RATE_RESERVATION_TTL_NS`. The YAML key is
+`policy.options.rate_reservation_ttl_ns`.
+
 `rate_slice` defaults to:
 
 ```text
@@ -1699,7 +1704,9 @@ typedef enum qhw_adm_option_key {
 	QHW_ADM_OPT_CREDIT_RESERVATION_TTL_NS = 1001,
 	QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT = 1002,
 	QHW_ADM_OPT_CREDIT_OVERCOMMIT_CREDITS = 1003,
-	QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM = 1004
+	QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM = 1004,
+	QHW_ADM_OPT_RATE_RESERVATION_TTL_NS = 2001,
+	QHW_ADM_OPT_RATE_SLICE = 2002
 } qhw_adm_option_key_t;
 ```
 
@@ -2535,21 +2542,18 @@ accounting paths, and richer wrappers.
   available capacity.
 - Return accepted, delayed, or rejected decisions based on required rate,
   available rate, slice size, device state, and walltime feasibility.
-- Track total, reserved, consumed, returned, and available rate units per
-  device.
-- Implement window-local rate consumption, accounting-window advancement, and
-  over-limit detection when `rate_consumed` exceeds `rate_reserved`.
+- Track total, reserved, and available rate units through the common
+  reservation lifecycle.
 - Return rate capacity on release, cancellation, and expiration through the
   common reservation lifecycle path.
-- Implement policy hooks needed by the common usage-accounting APIs.
+- Provide policy hooks needed by the later common usage-accounting APIs.
 - Add C tests for rate derivation, exact-slice admission, multi-slice
-  admission, insufficient rate, oversized requests, walltime rejection,
-  reservation quantum-budget storage, release return, cancellation return,
-  expiration return, usage consumption, returned usage, and invalid
-  configuration.
+  admission, insufficient rate, oversized requests, reservation quantum-budget
+  storage, release return, cancellation return, expiration return, invalid
+  configuration, and YAML configuration.
 - Add Python tests for rate configuration, device-rate derivation, accepted
   decisions, delayed decisions, rejected decisions, release return, and
-  walltime feasibility.
+  expiration return.
 - Validate the phase with C and Python tests that derive device rate from the
   baseline profile, admit a valid request, delay a capacity-bound request, and
   reject an impossible request.

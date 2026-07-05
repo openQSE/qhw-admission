@@ -25,6 +25,8 @@ Run one policy test directly:
 ```bash
 ctest --test-dir build -R test_credit --output-on-failure
 ctest --test-dir build -R test_python_credit --output-on-failure
+ctest --test-dir build -R test_rate --output-on-failure
+ctest --test-dir build -R test_python_rate --output-on-failure
 ```
 
 Build without the standard policy plugins:
@@ -41,8 +43,8 @@ ctest --test-dir build-noplugins --output-on-failure
 cmake --install build --prefix install
 ```
 
-The core library installs under `install/lib`. Standard policy plugins install
-under `install/lib/qhw_admission/policies`.
+The core library installs under `install/lib`. Standard `unlimited`, `credit`,
+and `rate` policy plugins install under `install/lib/qhw_admission/policies`.
 
 ## Credit Policy Configuration
 
@@ -154,3 +156,86 @@ qhw_adm_set_policy(ctx, profile.device_id, "credit", NULL, 0);
 
 Set `profile.total_credits` to a nonzero value when the site wants an explicit
 credit budget.
+
+## Rate Policy Configuration
+
+The rate policy admits reservations against finite device throughput. The
+throughput unit is the baseline circuit. The policy grants one or more rate
+slices, where each slice reserves a portion of the device throughput during the
+configured accounting window.
+
+The rate budget can be configured explicitly or derived automatically. An
+explicit `device_rate` takes precedence.
+
+```text
+if device_rate != 0:
+  rate_capacity = device_rate
+else:
+  estimated_baseline_ns = estimator(device_profile, baseline_circuit)
+  rate_capacity = ceil(time_span_ns / estimated_baseline_ns)
+```
+
+For each request, the policy computes the quantum budget from walltime after
+subtracting classical runtime and overhead. The requested rate is then:
+
+```text
+rate_required =
+  ceil((baseline_units_required * time_span_ns) / quantum_budget_ns)
+```
+
+### Configurable Inputs
+
+| Input | C field or API | YAML key | Purpose |
+|---|---|---|---|
+| Explicit rate | `qhw_adm_device_profile_t.device_rate` | `rate.device_rate` | Overrides derived rate capacity when nonzero. |
+| Estimator | `qhw_adm_set_estimator()` | `estimator.name` | Computes baseline and request cost. |
+| Timing window | `qhw_adm_device_profile_t.time_span_ns` | `time_span_ns` | Accounting window used when deriving rate capacity. |
+| Device profile | `qhw_adm_register_device()` | `devices[]` | Supplies timing, limits, baseline shape, and concurrency target. |
+| Baseline circuit | `qhw_adm_device_profile_t.baseline` | `baseline` | Defines one rate unit. |
+| Target concurrency | `qhw_adm_device_profile_t.concurrent_jobs` | `rate.concurrent_jobs` | Computes the default rate slice when no explicit slice is provided. |
+| Rate slice | `QHW_ADM_OPT_RATE_SLICE` | `policy.options.rate_slice` | Minimum allocatable rate grant. |
+| Reservation TTL | `QHW_ADM_OPT_RATE_RESERVATION_TTL_NS` | `policy.options.rate_reservation_ttl_ns` | Optional policy-selected reservation lease duration. |
+
+### YAML Example
+
+This example derives rate capacity from `time_span_ns` because `device_rate` is
+zero.
+
+```yaml
+plugin_paths:
+  policies: ["build/policies"]
+devices:
+  - device_id: 7
+    max_qubits: 20
+    max_shots: 10000
+    time_span_ns: 1000000000
+    baseline:
+      qubit_count: 4
+      depth: 10
+      one_q_gate_count: 10
+      two_q_gate_count: 5
+      measurement_count: 2
+      shots: 100
+    timing:
+      one_q_gate_ns: 20
+      two_q_gate_ns: 100
+      measurement_ns: 1000
+      compile_ns: 1000
+      control_overhead_ns: 200
+      provider_overhead_ns: 300
+    rate:
+      device_rate: 0
+      concurrent_jobs: 2
+    policy:
+      name: rate
+      options:
+        rate_slice: 2
+```
+
+This example overrides derived capacity:
+
+```yaml
+rate:
+  device_rate: 12
+  concurrent_jobs: 3
+```

@@ -519,6 +519,14 @@ static uint64_t metadata_key_from_name(const char *key)
 			"overcommit_ppm",
 			QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM
 		},
+		{
+			"rate_reservation_ttl_ns",
+			QHW_ADM_OPT_RATE_RESERVATION_TTL_NS
+		},
+		{
+			"rate_slice",
+			QHW_ADM_OPT_RATE_SLICE
+		},
 	};
 	size_t i;
 

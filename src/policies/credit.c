@@ -32,6 +32,27 @@ static uint64_t credit_saturating_sub(uint64_t a, uint64_t b)
 	return a - b;
 }
 
+static uint64_t credit_capped_available(
+	uint64_t core_available,
+	uint64_t external_limit,
+	uint64_t scoped_reserved)
+{
+	uint64_t scoped_available;
+
+	if (external_limit == 0) {
+		return core_available;
+	}
+	if (scoped_reserved >= external_limit) {
+		return 0;
+	}
+
+	scoped_available = external_limit - scoped_reserved;
+	if (core_available < scoped_available) {
+		return core_available;
+	}
+	return scoped_available;
+}
+
 static uint64_t credit_min_nonzero(uint64_t a, uint64_t b)
 {
 	if (a == 0) {
@@ -569,7 +590,6 @@ static qhw_adm_rc_t credit_capacity(
 {
 	struct credit_state *credit = state;
 	uint64_t effective_limit;
-	uint64_t scoped_remaining;
 	qhw_adm_rc_t rc;
 
 	(void)device;
@@ -597,12 +617,10 @@ static qhw_adm_rc_t credit_capacity(
 	out_capacity->core_available_credits = credit_saturating_sub(
 		effective_limit,
 		core_view->credits_reserved);
-	scoped_remaining = credit_saturating_sub(
+	out_capacity->effective_available_credits = credit_capped_available(
+		out_capacity->core_available_credits,
 		core_view->external_credit_limit,
 		core_view->scoped_reserved_credits);
-	out_capacity->effective_available_credits = credit_min_nonzero(
-		out_capacity->core_available_credits,
-		scoped_remaining);
 	return QHW_ADM_OK;
 }
 

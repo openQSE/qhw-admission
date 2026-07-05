@@ -227,18 +227,25 @@ static qhw_adm_rc_t estimate_request(
 	return QHW_ADM_OK;
 }
 
-static uint64_t min_nonzero(uint64_t a, uint64_t b)
+static uint64_t capped_available(
+	uint64_t core_available,
+	uint64_t external_limit,
+	uint64_t scoped_reserved)
 {
-	if (a == 0) {
-		return b;
+	uint64_t scoped_available;
+
+	if (external_limit == 0) {
+		return core_available;
 	}
-	if (b == 0) {
-		return a;
+	if (scoped_reserved >= external_limit) {
+		return 0;
 	}
-	if (a < b) {
-		return a;
+
+	scoped_available = external_limit - scoped_reserved;
+	if (core_available < scoped_available) {
+		return core_available;
 	}
-	return b;
+	return scoped_available;
 }
 
 static uint64_t saturating_sub(uint64_t a, uint64_t b)
@@ -455,16 +462,14 @@ static qhw_adm_rc_t build_capacity_view(
 	view.core_available_rate = saturating_sub(
 		view.total_rate,
 		view.rate_reserved);
-	view.effective_available_credits = min_nonzero(
+	view.effective_available_credits = capped_available(
 		view.core_available_credits,
-		saturating_sub(
-			view.external_credit_limit,
-			view.scoped_reserved_credits));
-	view.effective_available_rate = min_nonzero(
+		view.external_credit_limit,
+		view.scoped_reserved_credits);
+	view.effective_available_rate = capped_available(
 		view.core_available_rate,
-		saturating_sub(
-			view.external_rate_limit,
-			view.scoped_reserved_rate));
+		view.external_rate_limit,
+		view.scoped_reserved_rate);
 
 	*out_capacity = view;
 	return QHW_ADM_OK;
@@ -883,6 +888,17 @@ static qhw_adm_rc_t create_reservation_entry(
 	return QHW_ADM_OK;
 }
 
+static uint64_t grant_capacity_units(const qhw_adm_policy_grant_t *grant)
+{
+	if (grant->credits_granted != 0) {
+		return grant->credits_granted;
+	}
+	if (grant->rate_granted != 0) {
+		return grant->rate_granted;
+	}
+	return grant->baseline_units_granted;
+}
+
 qhw_adm_rc_t qhw_adm_reserve(
 	qhw_adm_t *ctx,
 	const qhw_adm_request_t *request,
@@ -1014,7 +1030,7 @@ qhw_adm_rc_t qhw_adm_reserve(
 	}
 
 	out_decision->reservation_id = reservation_id;
-	out_decision->capacity_granted = grant.baseline_units_granted;
+	out_decision->capacity_granted = grant_capacity_units(&grant);
 	decorate_decision(
 		out_decision,
 		request,
