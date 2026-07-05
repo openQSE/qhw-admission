@@ -538,6 +538,12 @@ typedef qhw_adm_rc_t (*qhw_adm_policy_consume_fn)(
 	const qhw_adm_usage_t *usage,
 	qhw_adm_decision_t *out_decision);
 
+typedef qhw_adm_rc_t (*qhw_adm_policy_authorize_usage_fn)(
+	void *state,
+	const qhw_adm_reservation_t *reservation,
+	const qhw_adm_usage_t *usage,
+	qhw_adm_decision_t *out_decision);
+
 typedef qhw_adm_rc_t (*qhw_adm_policy_return_usage_fn)(
 	void *state,
 	const qhw_adm_reservation_t *reservation,
@@ -560,6 +566,7 @@ struct qhw_adm_policy_desc {
 	qhw_adm_policy_evaluate_fn evaluate;
 	qhw_adm_policy_reserve_fn reserve;
 	qhw_adm_policy_release_fn release;
+	qhw_adm_policy_authorize_usage_fn authorize_usage;
 	qhw_adm_policy_consume_fn consume;
 	qhw_adm_policy_return_usage_fn return_usage;
 	qhw_adm_policy_capacity_fn capacity;

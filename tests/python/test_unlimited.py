@@ -14,6 +14,7 @@ from qhw_admission import (
     RESERVATION_CANCELLED,
     RESERVATION_EXPIRED,
     RESERVATION_RELEASED,
+    Usage,
     WORKLOAD_HYBRID_JOB,
 )
 
@@ -130,6 +131,29 @@ class UnlimitedPolicyTests(unittest.TestCase):
             self.assertEqual(ctx.expire(2000), 1)
             reservation = ctx.get_reservation(decision.reservation_id)
             self.assertEqual(reservation.state, RESERVATION_EXPIRED)
+
+    def test_conflicting_idempotent_usage_rejected(self):
+        task = make_task()
+
+        with self.setup_context() as ctx:
+            decision = ctx.reserve(make_request(task))
+            usage = Usage(
+                reservation_id=decision.reservation_id,
+                task_id=501,
+                class_id=11,
+                baseline_units=1,
+            )
+            conflicting = Usage(
+                reservation_id=decision.reservation_id,
+                task_id=501,
+                class_id=11,
+                baseline_units=999,
+            )
+
+            consumed = ctx.consume(decision.reservation_id, usage)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
+            with self.assertRaises(AdmissionError):
+                ctx.consume(decision.reservation_id, conflicting)
 
     def test_invalid_request(self):
         task = make_task()

@@ -61,6 +61,26 @@ static size_t qhw_adm_reservation_sizeof(void)
 	return sizeof(qhw_adm_reservation_t);
 }
 
+static size_t qhw_adm_usage_sizeof(void)
+{
+	return sizeof(qhw_adm_usage_t);
+}
+
+static size_t qhw_adm_usage_state_sizeof(void)
+{
+	return sizeof(qhw_adm_usage_state_t);
+}
+
+static size_t qhw_adm_compliance_sizeof(void)
+{
+	return sizeof(qhw_adm_compliance_t);
+}
+
+static size_t qhw_adm_actual_usage_sizeof(void)
+{
+	return sizeof(qhw_adm_actual_usage_t);
+}
+
 static int qhw_adm_py_metadata_valid(
 	const qhw_adm_kv_t *metadata,
 	size_t metadata_count,

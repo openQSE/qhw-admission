@@ -107,15 +107,39 @@ static qhw_adm_rc_t mock_estimate_baseline(
 	return QHW_ADM_OK;
 }
 
+static qhw_adm_rc_t mock_record_actual(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_reservation_t *reservation,
+	const qhw_adm_actual_usage_t *actual)
+{
+	(void)state;
+	(void)device;
+	(void)reservation;
+
+	if (actual == NULL ||
+	    actual->struct_size < sizeof(*actual)) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if (actual->observed_device_ns == 999) {
+		return QHW_ADM_ERR_ESTIMATOR;
+	}
+
+	return QHW_ADM_OK;
+}
+
 static const qhw_adm_estimator_desc_t mock_desc = {
 	.struct_size = sizeof(mock_desc),
 	.abi_version = QHW_ADM_ABI_VERSION,
 	.name = "mock",
-	.capabilities = QHW_ADM_EST_CAP_TASK | QHW_ADM_EST_CAP_BASELINE,
+	.capabilities = QHW_ADM_EST_CAP_TASK |
+		QHW_ADM_EST_CAP_BASELINE |
+		QHW_ADM_EST_CAP_FEEDBACK,
 	.init = mock_init,
 	.destroy = mock_destroy,
 	.estimate_task = mock_estimate_task,
 	.estimate_baseline = mock_estimate_baseline,
+	.record_actual = mock_record_actual,
 };
 
 const qhw_adm_estimator_desc_t *qhw_adm_estimator_plugin(void)

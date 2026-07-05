@@ -157,6 +157,31 @@ static qhw_adm_reservation_t make_reservation_output(void)
 	return reservation;
 }
 
+static qhw_adm_usage_state_t make_usage_output(void)
+{
+	qhw_adm_usage_state_t usage;
+
+	memset(&usage, 0, sizeof(usage));
+	usage.struct_size = sizeof(usage);
+	return usage;
+}
+
+static qhw_adm_usage_t make_rate_usage(
+	uint64_t task_id,
+	uint64_t event_time_ns,
+	uint64_t rate_units)
+{
+	qhw_adm_usage_t usage = {
+		.struct_size = sizeof(usage),
+		.task_id = task_id,
+		.class_id = 11,
+		.event_time_ns = event_time_ns,
+		.rate_units = rate_units,
+	};
+
+	return usage;
+}
+
 static int setup_context_with_profile(
 	const qhw_adm_device_profile_t *profile,
 	const qhw_adm_kv_t *options,
@@ -374,6 +399,84 @@ static int test_cancel_and_expire_return_capacity(void)
 	return 0;
 }
 
+static int test_usage_windows_follow_event_time(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_qtask_class_t task = make_task(2);
+	qhw_adm_request_t request = make_request(&task, 42, 2000000000ULL);
+	qhw_adm_decision_t decision = make_decision_output();
+	qhw_adm_usage_t first = make_rate_usage(501, 1, 2);
+	qhw_adm_usage_t same_window = make_rate_usage(502, 2, 1);
+	qhw_adm_usage_t next_window;
+	qhw_adm_usage_t returned = make_rate_usage(0, 1, 1);
+	qhw_adm_usage_t after_return = make_rate_usage(504, 2, 1);
+	qhw_adm_usage_state_t usage_state = make_usage_output();
+	uint64_t reservation_id;
+
+	next_window = make_rate_usage(503, 1000000001ULL, 2);
+	CHECK(setup_context(4, 2, 1000000000ULL, &ctx) == 0);
+	CHECK(qhw_adm_reserve(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(decision.capacity_granted == 2);
+	reservation_id = decision.reservation_id;
+
+	CHECK(qhw_adm_consume(ctx, reservation_id, &first,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(qhw_adm_consume(ctx, reservation_id, &same_window,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_REJECTED);
+	CHECK(qhw_adm_return_usage(ctx, reservation_id, &returned) ==
+		QHW_ADM_OK);
+	CHECK(qhw_adm_get_usage(ctx, reservation_id, &usage_state) ==
+		QHW_ADM_OK);
+	CHECK(usage_state.rate_consumed == 1);
+	CHECK(usage_state.remaining_rate == 1);
+	CHECK(qhw_adm_consume(ctx, reservation_id, &after_return,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(qhw_adm_consume(ctx, reservation_id, &next_window,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_usage_reports_latest_rate_window(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_qtask_class_t task = make_task(2);
+	qhw_adm_request_t request = make_request(&task, 42, 2000000000ULL);
+	qhw_adm_decision_t decision = make_decision_output();
+	qhw_adm_usage_t first = make_rate_usage(601, 1, 1);
+	qhw_adm_usage_t second = make_rate_usage(602, 1000000001ULL, 1);
+	qhw_adm_usage_t third = make_rate_usage(603, 1000000002ULL, 1);
+	qhw_adm_usage_state_t usage_state = make_usage_output();
+
+	CHECK(setup_context(4, 2, 1000000000ULL, &ctx) == 0);
+	CHECK(qhw_adm_reserve(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(decision.capacity_granted == 2);
+
+	CHECK(qhw_adm_consume(ctx, decision.reservation_id, &first,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(qhw_adm_consume(ctx, decision.reservation_id, &second,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(qhw_adm_get_usage(ctx, decision.reservation_id, &usage_state) ==
+		QHW_ADM_OK);
+	CHECK(usage_state.rate_consumed == 1);
+	CHECK(usage_state.remaining_rate == 1);
+	CHECK(qhw_adm_consume(ctx, decision.reservation_id, &third,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
 static int test_invalid_configuration(void)
 {
 	qhw_adm_t *ctx = NULL;
@@ -499,6 +602,8 @@ int main(void)
 	CHECK(test_scoped_external_rate_cap() == 0);
 	CHECK(test_oversized_request_is_rejected() == 0);
 	CHECK(test_cancel_and_expire_return_capacity() == 0);
+	CHECK(test_usage_windows_follow_event_time() == 0);
+	CHECK(test_usage_reports_latest_rate_window() == 0);
 	CHECK(test_invalid_configuration() == 0);
 	CHECK(test_yaml_configuration() == 0);
 	return 0;

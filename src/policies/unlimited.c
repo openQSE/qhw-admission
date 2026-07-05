@@ -298,6 +298,7 @@ static const qhw_adm_policy_desc_t unlimited_desc = {
 	.evaluate = unlimited_evaluate,
 	.reserve = unlimited_reserve,
 	.release = unlimited_release,
+	.authorize_usage = unlimited_consume,
 	.consume = unlimited_consume,
 	.return_usage = unlimited_return_usage,
 	.capacity = unlimited_capacity,

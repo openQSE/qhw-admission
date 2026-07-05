@@ -14,9 +14,18 @@ static void qhw_adm_free(void *ptr, void *user_data)
 	free(ptr);
 }
 
-static int qhw_adm_registry_init(struct qhw_hash_table *table)
+qhw_adm_rc_t qhw_adm_init_hash_table(struct qhw_hash_table *table)
 {
-	return qhw_hash_table_init(table, 8, qhw_adm_alloc, qhw_adm_free, NULL);
+	if (qhw_hash_table_init(
+		table,
+		8,
+		qhw_adm_alloc,
+		qhw_adm_free,
+		NULL) != 0) {
+		return QHW_ADM_ERR_NOMEM;
+	}
+
+	return QHW_ADM_OK;
 }
 
 qhw_adm_rc_t qhw_adm_init_registries(qhw_adm_t *ctx)
@@ -25,19 +34,19 @@ qhw_adm_rc_t qhw_adm_init_registries(qhw_adm_t *ctx)
 		return QHW_ADM_ERR_INVAL;
 	}
 
-	if (qhw_adm_registry_init(&ctx->devices) != 0) {
+	if (qhw_adm_init_hash_table(&ctx->devices) != QHW_ADM_OK) {
 		return QHW_ADM_ERR_NOMEM;
 	}
-	if (qhw_adm_registry_init(&ctx->reservations) != 0) {
+	if (qhw_adm_init_hash_table(&ctx->reservations) != QHW_ADM_OK) {
 		qhw_hash_table_fini(&ctx->devices, NULL, NULL);
 		return QHW_ADM_ERR_NOMEM;
 	}
-	if (qhw_adm_registry_init(&ctx->policies) != 0) {
+	if (qhw_adm_init_hash_table(&ctx->policies) != QHW_ADM_OK) {
 		qhw_hash_table_fini(&ctx->reservations, NULL, NULL);
 		qhw_hash_table_fini(&ctx->devices, NULL, NULL);
 		return QHW_ADM_ERR_NOMEM;
 	}
-	if (qhw_adm_registry_init(&ctx->estimators) != 0) {
+	if (qhw_adm_init_hash_table(&ctx->estimators) != QHW_ADM_OK) {
 		qhw_hash_table_fini(&ctx->policies, NULL, NULL);
 		qhw_hash_table_fini(&ctx->reservations, NULL, NULL);
 		qhw_hash_table_fini(&ctx->devices, NULL, NULL);

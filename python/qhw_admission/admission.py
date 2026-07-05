@@ -353,6 +353,81 @@ class CapacityView:
         self.metadata = _copy_metadata(native.metadata, native.metadata_count)
 
 
+class Usage:
+    def __init__(
+        self,
+        reservation_id,
+        task_id=0,
+        class_id=0,
+        event_time_ns=0,
+        estimated_ns=0,
+        actual_ns=0,
+        baseline_units=0,
+        credits=0,
+        rate_units=0,
+    ):
+        self._native = _native.qhw_adm_usage_t()
+        self._native.struct_size = _native.qhw_adm_usage_sizeof()
+        self._native.reservation_id = reservation_id
+        self._native.task_id = task_id
+        self._native.class_id = class_id
+        self._native.event_time_ns = event_time_ns
+        self._native.estimated_ns = estimated_ns
+        self._native.actual_ns = actual_ns
+        self._native.baseline_units = baseline_units
+        self._native.credits = credits
+        self._native.rate_units = rate_units
+        self._native.metadata = None
+        self._native.metadata_count = 0
+
+
+class UsageState:
+    def __init__(self, native):
+        self.reservation_id = native.reservation_id
+        self.credits_reserved = native.credits_reserved
+        self.credits_consumed = native.credits_consumed
+        self.rate_reserved = native.rate_reserved
+        self.rate_consumed = native.rate_consumed
+        self.estimated_total_ns = native.estimated_total_ns
+        self.actual_total_ns = native.actual_total_ns
+        self.remaining_credits = native.remaining_credits
+        self.remaining_rate = native.remaining_rate
+
+
+class Compliance:
+    def __init__(self, native):
+        self.reservation_id = native.reservation_id
+        self.overuse_count = native.overuse_count
+        self.underuse_score = native.underuse_score
+        self.unused_capacity = native.unused_capacity
+        self.action = native.action
+        self.message = native.message
+
+
+class ActualUsage:
+    def __init__(
+        self,
+        reservation_id,
+        task_id=0,
+        observed_device_ns=0,
+        observed_compile_ns=0,
+        observed_transfer_ns=0,
+        observed_control_overhead_ns=0,
+    ):
+        self._native = _native.qhw_adm_actual_usage_t()
+        self._native.struct_size = _native.qhw_adm_actual_usage_sizeof()
+        self._native.reservation_id = reservation_id
+        self._native.task_id = task_id
+        self._native.observed_device_ns = observed_device_ns
+        self._native.observed_compile_ns = observed_compile_ns
+        self._native.observed_transfer_ns = observed_transfer_ns
+        self._native.observed_control_overhead_ns = (
+            observed_control_overhead_ns
+        )
+        self._native.metadata = None
+        self._native.metadata_count = 0
+
+
 class AdmissionContext:
     def __init__(self, threading=THREAD_USER):
         self._ctx = None
@@ -581,6 +656,70 @@ class AdmissionContext:
             self._check_rc(ERR_STATE, "qhw_adm_expire")
         return expired_count
 
+    def authorize_usage(self, reservation_id, usage):
+        self._require_open()
+        decision = _native.qhw_adm_decision_t()
+        decision.struct_size = _native.qhw_adm_decision_sizeof()
+        rc = _native.qhw_adm_authorize_usage(
+            self._ctx,
+            reservation_id,
+            usage._native,
+            decision,
+        )
+        self._check_rc(rc, "qhw_adm_authorize_usage")
+        return Decision(decision)
+
+    def consume(self, reservation_id, usage):
+        self._require_open()
+        decision = _native.qhw_adm_decision_t()
+        decision.struct_size = _native.qhw_adm_decision_sizeof()
+        rc = _native.qhw_adm_consume(
+            self._ctx,
+            reservation_id,
+            usage._native,
+            decision,
+        )
+        self._check_rc(rc, "qhw_adm_consume")
+        return Decision(decision)
+
+    def return_usage(self, reservation_id, usage):
+        self._require_open()
+        rc = _native.qhw_adm_return_usage(
+            self._ctx,
+            reservation_id,
+            usage._native,
+        )
+        self._check_rc(rc, "qhw_adm_return_usage")
+
+    def get_usage(self, reservation_id):
+        self._require_open()
+        usage = _native.qhw_adm_usage_state_t()
+        usage.struct_size = _native.qhw_adm_usage_state_sizeof()
+        rc = _native.qhw_adm_get_usage(self._ctx, reservation_id, usage)
+        self._check_rc(rc, "qhw_adm_get_usage")
+        return UsageState(usage)
+
+    def get_compliance(self, reservation_id):
+        self._require_open()
+        compliance = _native.qhw_adm_compliance_t()
+        compliance.struct_size = _native.qhw_adm_compliance_sizeof()
+        rc = _native.qhw_adm_get_compliance(
+            self._ctx,
+            reservation_id,
+            compliance,
+        )
+        self._check_rc(rc, "qhw_adm_get_compliance")
+        return Compliance(compliance)
+
+    def record_actual(self, reservation_id, actual):
+        self._require_open()
+        rc = _native.qhw_adm_record_actual(
+            self._ctx,
+            reservation_id,
+            actual._native,
+        )
+        self._check_rc(rc, "qhw_adm_record_actual")
+
     def _require_open(self):
         if self._ctx is None:
             raise AdmissionError("admission context is closed")
@@ -597,8 +736,10 @@ __all__ = [
     "AdmissionContext",
     "AdmissionError",
     "AdmissionRequest",
+    "ActualUsage",
     "Baseline",
     "CapacityView",
+    "Compliance",
     "COMPLIANCE_ALLOW",
     "COMPLIANCE_DELAY",
     "COMPLIANCE_REJECT",
@@ -620,6 +761,8 @@ __all__ = [
     "RESERVATION_PENDING",
     "RESERVATION_RELEASED",
     "Reservation",
+    "Usage",
+    "UsageState",
     "OK",
     "OPT_CREDIT_ALLOW_OVERCOMMIT",
     "OPT_CREDIT_OVERCOMMIT_CREDITS",

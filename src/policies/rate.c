@@ -660,6 +660,7 @@ static const qhw_adm_policy_desc_t rate_desc = {
 	.evaluate = rate_evaluate,
 	.reserve = rate_reserve,
 	.release = rate_release,
+	.authorize_usage = rate_consume,
 	.consume = rate_consume,
 	.return_usage = rate_return_usage,
 	.capacity = rate_capacity,

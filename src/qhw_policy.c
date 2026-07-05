@@ -44,7 +44,9 @@ qhw_adm_rc_t qhw_adm_validate_policy_desc(
 		return QHW_ADM_ERR_INVAL;
 	}
 	if ((desc->capabilities & QHW_ADM_POLICY_CAP_USAGE_ACCOUNTING) != 0 &&
-	    (desc->consume == NULL || desc->return_usage == NULL)) {
+	    (desc->authorize_usage == NULL ||
+	     desc->consume == NULL ||
+	     desc->return_usage == NULL)) {
 		return QHW_ADM_ERR_INVAL;
 	}
 	if ((desc->capabilities & QHW_ADM_POLICY_CAP_CAPACITY_REPORT) != 0 &&

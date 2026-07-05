@@ -59,6 +59,7 @@ set(QHW_ADM_CORE_SOURCES
     src/qhw_registry.c
     src/qhw_reservation.c
     src/qhw_thread.c
+    src/qhw_usage.c
     src/estimators/baseline.c)
 
 add_library(qhw_admission SHARED ${QHW_ADM_CORE_SOURCES})
@@ -194,6 +195,20 @@ if(QHW_ADM_BUILD_TESTS)
         add_dependencies(test_credit qhw_adm_credit)
         add_test(NAME test_credit COMMAND test_credit)
 
+        add_executable(test_usage tests/c/test_usage.c)
+        target_include_directories(test_usage
+            PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(test_usage PRIVATE
+            qhw_admission
+            qhw_datastructures)
+        target_compile_definitions(test_usage PRIVATE
+            "QHW_ADM_TEST_CREDIT_DIR=\"$<TARGET_FILE_DIR:qhw_adm_credit>\""
+            "QHW_ADM_TEST_USAGE_GUARD_DIR=\"$<TARGET_FILE_DIR:qhw_adm_usage_guard>\""
+            "QHW_ADM_TEST_ESTIMATOR_DIR=\"$<TARGET_FILE_DIR:qhw_adm_estimator_mock>\"")
+        add_dependencies(test_usage qhw_adm_credit)
+        add_test(NAME test_usage COMMAND test_usage)
+
         add_executable(test_rate tests/c/test_rate.c)
         target_include_directories(test_rate
             PRIVATE
@@ -221,6 +236,9 @@ if(QHW_ADM_BUILD_TESTS)
         LIBRARY_OUTPUT_DIRECTORY
             ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
     add_dependencies(test_estimator qhw_adm_estimator_mock)
+    if(TARGET test_usage)
+        add_dependencies(test_usage qhw_adm_estimator_mock)
+    endif()
 
     add_library(qhw_adm_mock MODULE tests/plugins/qhw_adm_mock.c)
     target_include_directories(qhw_adm_mock
@@ -234,6 +252,22 @@ if(QHW_ADM_BUILD_TESTS)
         PREFIX ""
         LIBRARY_OUTPUT_DIRECTORY
             ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+    add_library(qhw_adm_usage_guard MODULE
+        tests/plugins/qhw_adm_usage_guard.c)
+    target_include_directories(qhw_adm_usage_guard
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_usage_guard PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_usage_guard PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+    if(TARGET test_usage)
+        add_dependencies(test_usage qhw_adm_usage_guard)
+    endif()
     add_library(qhw_adm_bad_caps MODULE tests/plugins/qhw_adm_bad_caps.c)
     target_include_directories(qhw_adm_bad_caps
         PRIVATE
@@ -450,6 +484,15 @@ if(QHW_ADM_BUILD_PYTHON AND QHW_ADM_BUILD_TESTS)
                 ${Python3_EXECUTABLE}
                 -S
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_credit.py)
+        add_test(
+            NAME test_python_usage
+            COMMAND
+                ${CMAKE_COMMAND} -E env
+                PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python
+                QHW_ADM_TEST_CREDIT_DIR=${CMAKE_CURRENT_BINARY_DIR}/policies
+                ${Python3_EXECUTABLE}
+                -S
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_usage.py)
         add_test(
             NAME test_python_rate
             COMMAND

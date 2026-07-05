@@ -42,6 +42,13 @@ struct qhw_adm_reservation_entry {
 	qhw_adm_kv_t *metadata;
 	const qhw_adm_policy_desc_t *policy;
 	void *policy_state;
+	struct qhw_hash_table usage_events;
+	struct qhw_list_node usage_event_list;
+	struct qhw_hash_table actual_events;
+	int usage_events_initialized;
+	int usage_event_list_initialized;
+	int actual_events_initialized;
+	uint64_t rate_window_ns;
 };
 
 struct qhw_adm_output_entry {
@@ -107,6 +114,8 @@ qhw_adm_rc_t qhw_adm_metadata_get_u64(
 qhw_adm_rc_t qhw_adm_init_registries(qhw_adm_t *ctx);
 
 void qhw_adm_fini_registries(qhw_adm_t *ctx);
+
+qhw_adm_rc_t qhw_adm_init_hash_table(struct qhw_hash_table *table);
 
 void qhw_adm_set_error(qhw_adm_t *ctx, const char *message);
 
@@ -210,6 +219,16 @@ void qhw_adm_free_policy_entry(void *value, void *user_data);
 void qhw_adm_free_policy_paths(qhw_adm_t *ctx);
 
 void qhw_adm_free_reservation_entry(void *value, void *user_data);
+
+void qhw_adm_free_usage_event(void *value, void *user_data);
+
+void qhw_adm_free_usage_events(
+	struct qhw_adm_reservation_entry *entry);
+
+void qhw_adm_free_actual_event(void *value, void *user_data);
+
+qhw_adm_rc_t qhw_adm_finalize_unused_capacity(
+	struct qhw_adm_reservation_entry *entry);
 
 int qhw_adm_device_has_active_reservation(
 	qhw_adm_t *ctx,

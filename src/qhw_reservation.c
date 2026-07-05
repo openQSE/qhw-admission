@@ -295,9 +295,24 @@ static void accumulate_active_capacity(
 			view->credits_reserved = saturating_add(
 				view->credits_reserved,
 				reservation->credits_reserved);
+			view->credits_consumed = saturating_add(
+				view->credits_consumed,
+				reservation->credits_consumed);
 			view->rate_reserved = saturating_add(
 				view->rate_reserved,
 				reservation->rate_reserved);
+			view->rate_consumed = saturating_add(
+				view->rate_consumed,
+				reservation->rate_consumed);
+			if (reservation->credits_reserved != 0) {
+				view->credits_returned = saturating_add(
+					view->credits_returned,
+					reservation->unused_capacity);
+			} else if (reservation->rate_reserved != 0) {
+				view->rate_returned = saturating_add(
+					view->rate_returned,
+					reservation->unused_capacity);
+			}
 			if (reservation->scope_id == scope_id) {
 				view->scoped_reserved_credits = saturating_add(
 					view->scoped_reserved_credits,
@@ -842,6 +857,9 @@ static qhw_adm_rc_t create_reservation_entry(
 	if (entry == NULL) {
 		return QHW_ADM_ERR_NOMEM;
 	}
+	qhw_list_init(&entry->usage_event_list);
+	entry->usage_event_list_initialized = 1;
+	entry->rate_window_ns = device->profile.time_span_ns;
 
 	rc = qhw_adm_copy_metadata(
 		grant->metadata,
@@ -851,6 +869,20 @@ static qhw_adm_rc_t create_reservation_entry(
 		free(entry);
 		return rc;
 	}
+
+	rc = qhw_adm_init_hash_table(&entry->usage_events);
+	if (rc != QHW_ADM_OK) {
+		qhw_adm_free_reservation_entry(entry, NULL);
+		return rc;
+	}
+	entry->usage_events_initialized = 1;
+
+	rc = qhw_adm_init_hash_table(&entry->actual_events);
+	if (rc != QHW_ADM_OK) {
+		qhw_adm_free_reservation_entry(entry, NULL);
+		return rc;
+	}
+	entry->actual_events_initialized = 1;
 
 	reservation = &entry->reservation;
 	reservation->struct_size = sizeof(*reservation);
@@ -1172,6 +1204,9 @@ static qhw_adm_rc_t transition_reservation(
 {
 	struct qhw_adm_reservation_entry *entry;
 	qhw_adm_reservation_t *reservation;
+	qhw_adm_reservation_state_t old_state;
+	uint64_t old_underuse_score;
+	uint64_t old_unused_capacity;
 	qhw_adm_rc_t rc;
 
 	entry = qhw_hash_table_find(&ctx->reservations, reservation_id);
@@ -1187,9 +1222,15 @@ static qhw_adm_rc_t transition_reservation(
 		return QHW_ADM_ERR_STATE;
 	}
 
-	if (entry->policy != NULL && entry->policy->release != NULL) {
-		qhw_adm_reservation_state_t old_state = reservation->state;
+	old_state = reservation->state;
+	old_unused_capacity = reservation->unused_capacity;
+	old_underuse_score = reservation->underuse_score;
+	rc = qhw_adm_finalize_unused_capacity(entry);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
 
+	if (entry->policy != NULL && entry->policy->release != NULL) {
 		reservation->state = state;
 		rc = entry->policy->release(
 			entry->policy_state,
@@ -1197,6 +1238,8 @@ static qhw_adm_rc_t transition_reservation(
 			reason_code);
 		if (rc != QHW_ADM_OK) {
 			reservation->state = old_state;
+			reservation->unused_capacity = old_unused_capacity;
+			reservation->underuse_score = old_underuse_score;
 			return rc;
 		}
 	} else {
@@ -1379,5 +1422,18 @@ void qhw_adm_free_reservation_entry(void *value, void *user_data)
 	qhw_adm_free_metadata_count(
 		entry->metadata,
 		entry->reservation.metadata_count);
+	if (entry->usage_events_initialized) {
+		qhw_hash_table_fini(
+			&entry->usage_events,
+			NULL,
+			NULL);
+	}
+	qhw_adm_free_usage_events(entry);
+	if (entry->actual_events_initialized) {
+		qhw_hash_table_fini(
+			&entry->actual_events,
+			qhw_adm_free_actual_event,
+			NULL);
+	}
 	free(entry);
 }

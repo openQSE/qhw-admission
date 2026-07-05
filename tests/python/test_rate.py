@@ -13,6 +13,7 @@ from qhw_admission import (
     QtaskClass,
     RESERVATION_EXPIRED,
     RESERVATION_RELEASED,
+    Usage,
     WORKLOAD_HYBRID_JOB,
 )
 
@@ -163,6 +164,100 @@ class RatePolicyTests(unittest.TestCase):
             self.assertEqual(reservation.state, RESERVATION_EXPIRED)
             capacity = ctx.get_capacity(7, 3)
             self.assertEqual(capacity.rate_reserved, 0)
+
+    def test_usage_windows_follow_event_time(self):
+        task = make_task()
+
+        with self.setup_context() as ctx:
+            decision = ctx.reserve(make_request(task))
+            reservation_id = decision.reservation_id
+            self.assertEqual(decision.capacity_granted, 2)
+
+            first = Usage(
+                reservation_id=reservation_id,
+                task_id=501,
+                class_id=11,
+                event_time_ns=1,
+                rate_units=2,
+            )
+            same_window = Usage(
+                reservation_id=reservation_id,
+                task_id=502,
+                class_id=11,
+                event_time_ns=2,
+                rate_units=1,
+            )
+            next_window = Usage(
+                reservation_id=reservation_id,
+                task_id=503,
+                class_id=11,
+                event_time_ns=1_000_000_001,
+                rate_units=2,
+            )
+            returned = Usage(
+                reservation_id=reservation_id,
+                event_time_ns=1,
+                rate_units=1,
+            )
+            after_return = Usage(
+                reservation_id=reservation_id,
+                task_id=504,
+                class_id=11,
+                event_time_ns=2,
+                rate_units=1,
+            )
+
+            consumed = ctx.consume(reservation_id, first)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
+            consumed = ctx.consume(reservation_id, same_window)
+            self.assertEqual(consumed.decision, DECISION_REJECTED)
+            ctx.return_usage(reservation_id, returned)
+            usage = ctx.get_usage(reservation_id)
+            self.assertEqual(usage.rate_consumed, 1)
+            self.assertEqual(usage.remaining_rate, 1)
+            consumed = ctx.consume(reservation_id, after_return)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
+            consumed = ctx.consume(reservation_id, next_window)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
+
+    def test_usage_reports_latest_rate_window(self):
+        task = make_task()
+
+        with self.setup_context() as ctx:
+            decision = ctx.reserve(make_request(task))
+            reservation_id = decision.reservation_id
+            self.assertEqual(decision.capacity_granted, 2)
+            first = Usage(
+                reservation_id=reservation_id,
+                task_id=601,
+                class_id=11,
+                event_time_ns=1,
+                rate_units=1,
+            )
+            second = Usage(
+                reservation_id=reservation_id,
+                task_id=602,
+                class_id=11,
+                event_time_ns=1_000_000_001,
+                rate_units=1,
+            )
+            third = Usage(
+                reservation_id=reservation_id,
+                task_id=603,
+                class_id=11,
+                event_time_ns=1_000_000_002,
+                rate_units=1,
+            )
+
+            consumed = ctx.consume(reservation_id, first)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
+            consumed = ctx.consume(reservation_id, second)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
+            usage = ctx.get_usage(reservation_id)
+            self.assertEqual(usage.rate_consumed, 1)
+            self.assertEqual(usage.remaining_rate, 1)
+            consumed = ctx.consume(reservation_id, third)
+            self.assertEqual(consumed.decision, DECISION_ACCEPTED)
 
     def test_yaml_configuration(self):
         policy_dir = os.environ["QHW_ADM_TEST_RATE_DIR"]

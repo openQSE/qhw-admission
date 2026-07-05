@@ -637,6 +637,7 @@ static const qhw_adm_policy_desc_t credit_desc = {
 	.evaluate = credit_evaluate,
 	.reserve = credit_reserve,
 	.release = credit_release,
+	.authorize_usage = credit_consume,
 	.consume = credit_consume,
 	.return_usage = credit_return_usage,
 	.capacity = credit_capacity,

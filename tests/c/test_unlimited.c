@@ -152,6 +152,18 @@ static qhw_adm_reservation_t make_reservation_output(void)
 	return reservation;
 }
 
+static qhw_adm_usage_t make_usage(uint64_t task_id, uint64_t baseline_units)
+{
+	qhw_adm_usage_t usage = {
+		.struct_size = sizeof(usage),
+		.task_id = task_id,
+		.class_id = 11,
+		.baseline_units = baseline_units,
+	};
+
+	return usage;
+}
+
 static int setup_context(qhw_adm_t **out_ctx)
 {
 	qhw_adm_t *ctx = NULL;
@@ -221,6 +233,27 @@ static int test_reserve_and_release(void)
 	CHECK(qhw_adm_get_capacity(ctx, request.device_id, request.scope_id,
 		&capacity) == QHW_ADM_OK);
 	CHECK(capacity.active_reservation_count == 0);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_conflicting_idempotent_usage_rejected(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_qtask_class_t task = make_task();
+	qhw_adm_request_t request = make_request(&task);
+	qhw_adm_decision_t decision = make_decision_output();
+	qhw_adm_usage_t usage = make_usage(501, 1);
+	qhw_adm_usage_t conflicting = make_usage(501, 999);
+
+	CHECK(setup_context(&ctx) == 0);
+	CHECK(qhw_adm_reserve(ctx, &request, &decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(qhw_adm_consume(ctx, decision.reservation_id, &usage,
+		&decision) == QHW_ADM_OK);
+	CHECK(decision.decision == QHW_ADM_DECISION_ACCEPTED);
+	CHECK(qhw_adm_consume(ctx, decision.reservation_id, &conflicting,
+		&decision) == QHW_ADM_ERR_STATE);
 	qhw_adm_destroy(ctx);
 	return 0;
 }
@@ -328,6 +361,7 @@ int main(void)
 {
 	CHECK(test_evaluate_accepts_without_capacity() == 0);
 	CHECK(test_reserve_and_release() == 0);
+	CHECK(test_conflicting_idempotent_usage_rejected() == 0);
 	CHECK(test_cancel_and_expire() == 0);
 	CHECK(test_device_state_blocks_admission() == 0);
 	CHECK(test_invalid_request() == 0);

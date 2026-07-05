@@ -137,6 +137,38 @@ qhw_adm_rc_t qhw_adm_expire(
 	uint64_t now_ns,
 	size_t *out_expired_count);
 
+qhw_adm_rc_t qhw_adm_authorize_usage(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_usage_t *usage,
+	qhw_adm_decision_t *out_decision);
+
+qhw_adm_rc_t qhw_adm_consume(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_usage_t *usage,
+	qhw_adm_decision_t *out_decision);
+
+qhw_adm_rc_t qhw_adm_return_usage(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_usage_t *usage);
+
+qhw_adm_rc_t qhw_adm_get_usage(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	qhw_adm_usage_state_t *out_usage);
+
+qhw_adm_rc_t qhw_adm_get_compliance(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	qhw_adm_compliance_t *out_compliance);
+
+qhw_adm_rc_t qhw_adm_record_actual(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_actual_usage_t *actual);
+
 #ifdef __cplusplus
 }
 #endif
