@@ -91,11 +91,13 @@ components, and user-facing qtask APIs to applications and runtimes.
 
 The service uses `qhw-admission` to decide whether a quantum job or hybrid job
 can enter the active pool for a managed device. Accepted requests create an
-admission envelope. The same service later receives qtask submissions, checks
-the qtask against the stored envelope, enforces credits or rate limits, and
-uses `qhw-scheduler` to order eligible qtasks. The scheduler library orders
-tasks. The service owns envelope accounting, device events, authorization, and
-the API boundary.
+admission envelope. The same service later receives qtask submissions,
+authorizes each qtask against the envelope, and uses `qhw-scheduler` to order
+eligible qtasks. Before a selected qtask is submitted to the device, the
+service charges the estimated usage against the envelope. After completion, it
+records measured usage for compliance and estimator feedback. The scheduler
+library orders tasks. The service owns device events, authorization, and the
+API boundary.
 
 Admission/control APIs are control-plane APIs. Normal application code should
 not be able to reserve capacity, release another job's reservation, renew a
@@ -121,13 +123,33 @@ sequenceDiagram
 
     RM->>RT: start admitted job
     RT->>QRC: submit qtask(reservation_id, qtask)
-    QRC->>QRC: authorize caller and check envelope
-    QRC->>SCHED: insert eligible qtask
-    SCHED-->>QRC: selected qtask
-    QRC->>DEV: run selected qtask
-    DEV-->>QRC: qtask result and timing
-    QRC->>QRC: update envelope usage
-    QRC-->>RT: completion event and result
+    QRC->>QRC: authorize caller and reservation ownership
+    QRC->>ADM: authorize_usage(reservation_id, estimated usage)
+    ADM-->>QRC: allow / delay / reject / terminate
+
+    alt usage allowed
+        QRC->>SCHED: insert eligible qtask
+    else delayed, rejected, throttled, or terminated
+        QRC-->>RT: usage decision
+    end
+
+    loop while device can accept work
+        QRC->>SCHED: select next qtask
+        SCHED-->>QRC: selected qtask and metadata
+        QRC->>ADM: consume(reservation_id, estimated usage)
+        ADM-->>QRC: charged usage and policy action
+        QRC->>DEV: run selected qtask
+        DEV-->>QRC: qtask completion(result, timing)
+        QRC->>ADM: record_actual(reservation_id, actual usage)
+        ADM-->>QRC: updated feedback and compliance state
+        QRC->>QRC: apply action to reservation or future qtasks
+        QRC-->>RT: completion event and result
+    end
+
+    RM->>QRC: reserve(next job request, device_id)
+    QRC->>ADM: reserve(request)
+    ADM-->>QRC: decision using current reservations and usage
+    QRC-->>RM: admission decision
 
     QRC-->>RM: usage or policy event
 ```
@@ -199,6 +221,9 @@ qhw-admission/
       qhw_admission.h
       qhw_admission_types.h
 
+  external/
+    qhw-datastructures/
+
   src/
     qhw_admission_internal.h
     qhw_admission.c
@@ -213,10 +238,6 @@ qhw-admission/
 
     estimators/
       baseline.c
-
-    util/
-      qhw_hash_table.c
-      qhw_hash_table.h
 
   swg/
     qhw_admission.i
@@ -265,10 +286,10 @@ installed under the qhw-admission prefix. External plugins can be loaded by
 explicit path. A caller can also add search paths for site-installed plugins
 when plugin names are selected through configuration.
 
-The repository skeleton includes only a hash table utility. Reservation lookup
-is keyed by reservation ID and should not be linear. Expiration uses a scan in
-the lean design because it is not on the hot reserve path. A heap or RB tree is
-appropriate when expiration volume justifies it.
+`qhw-datastructures` is a git submodule under `external/`. The admission
+implementation uses it for hash tables, heaps, lists, RB trees, rings, and
+similar internal containers. The public admission API does not expose
+qhw-datastructures types.
 
 The README, detailed design, policy notes, and tests are the primary
 documentation targets. Man pages belong with the finalized public API.
@@ -279,6 +300,11 @@ CMake is the primary build system. It should build the core library, policy
 plugins, estimator plugins, C tests, and SWIG-generated Python extension.
 Python packaging should use `pyproject.toml` and `scikit-build-core`, matching
 the direction used by `qhw-scheduler`.
+
+CMake should add `external/qhw-datastructures` as a subdirectory and link the
+admission core and tests against its exported target. This keeps shared
+container logic in one repository and avoids local copies of hash tables,
+heaps, lists, RB trees, or rings.
 
 Build options should be explicit:
 
@@ -302,6 +328,7 @@ The standard build should produce:
 
 - `libqhw_admission.so`
 - `libqhw_admission.a`, when static builds are enabled
+- the `qhw-datastructures` library through the submodule build
 - `qhw_adm_unlimited.so`
 - `qhw_adm_credit.so`
 - `qhw_adm_rate.so`
@@ -319,10 +346,18 @@ The install target should use the selected CMake prefix.
     qhw_admission/
       qhw_admission.h
       qhw_admission_types.h
+    qhw_datastructures/
+      qhw_hash_table.h
+      qhw_heap.h
+      qhw_list.h
+      qhw_rb_tree.h
+      qhw_ring.h
 
   lib/
     libqhw_admission.so
     libqhw_admission.a
+    libqhw_datastructures.so
+    libqhw_datastructures.a
 
     qhw_admission/
       policies/
@@ -349,6 +384,11 @@ in this section define the C fields in each public structure. Each public
 descriptor begins with `struct_size` so implementations can validate the caller
 view of the structure before reading fields.
 
+The field tables in this section are normative ABI definitions. The public
+header must define each structure with the fields shown here, in the order
+shown here, using the listed C types. New fields are appended after existing
+fields and are guarded by `struct_size` validation.
+
 | Structure | Visibility | Purpose | Use |
 |---|---|---|---|
 | `qhw_adm_attr_t` | Public | Context creation options. | Passed to `qhw_adm_create()` to select threading mode and context-wide options. |
@@ -356,7 +396,8 @@ view of the structure before reading fields.
 | `qhw_adm_kv_t` | Public | Key-value metadata or option entry. | Forms metadata and option arrays attached to requests, devices, qtask classes, policies, and estimators. |
 | `qhw_adm_baseline_t` | Public | Baseline circuit shape used for credit and rate accounting. | Defines the reference workload unit used to convert estimates into credits or rate units. |
 | `qhw_adm_device_profile_t` | Public | Device admission profile registered with a context. | Supplies the device limits, baseline, and policy capacity used when evaluating requests for a target device. |
-| `qhw_adm_capacity_snapshot_t` | Public | Scheduler or device capacity projection supplied through a callback. | Lets admission policies incorporate live queue, reservation, and availability state owned by the control service. |
+| `qhw_adm_capacity_snapshot_t` | Public | Scheduler or device capacity projection supplied through a callback. | Lets the admission core incorporate live queue, reservation, and availability state owned by the control service. |
+| `qhw_adm_capacity_view_t` | Public | Core-computed capacity view for one device and scope. | Combines the provider snapshot with the committed capacity ledger and supplies policy callbacks with normalized capacity inputs. |
 | `qhw_adm_capacity_provider_t` | Public | Callback table used to obtain capacity snapshots. | Registered with the context so policies can request a fresh capacity projection during evaluation or reservation. |
 | `qhw_adm_qtask_class_t` | Public | Resource-estimation shape for one class of qtasks. | Describes repeated quantum work in an admission request without requiring admission to parse task payloads. |
 | `qhw_adm_request_t` | Public | Admission request submitted by the control service or resource manager. | Carries target device, owner, walltime, workload kind, qtask classes, and request metadata into `evaluate()` or `reserve()`. |
@@ -367,6 +408,7 @@ view of the structure before reading fields.
 | `qhw_adm_usage_state_t` | Public | Aggregate reservation usage state. | Reports how much of an admitted reservation has been consumed and how much remains. |
 | `qhw_adm_compliance_t` | Public | Overuse, underuse, and policy-action state. | Reports policy decisions tied to envelope violations or systematic underuse. |
 | `qhw_adm_actual_usage_t` | Public | Measured usage record for feedback. | Feeds observed execution, compile, transfer, and control timing back into estimator calibration. |
+| `qhw_adm_policy_grant_t` | Public plugin interface | Capacity grant proposed by a policy. | Filled by policy plugins during reserve planning. The core commits the grant after the pending reservation is complete and before publication. |
 | `qhw_adm_policy_desc_t` | Public plugin interface | Policy plugin descriptor. | Exported by policy plugins so the core can create, configure, and invoke the admission algorithm. |
 | `qhw_adm_estimator_desc_t` | Public plugin interface | Estimator plugin descriptor. | Exported by estimator plugins so the core can create, configure, and invoke resource-estimation logic. |
 
@@ -454,12 +496,55 @@ estimation and admission policy:
   Standard fields should cover estimator version, observed device time, consumed
   credits, consumed rate, unused capacity, and over-limit events.
 
-The public metadata keys can use names such as:
+The public header defines these metadata keys:
+
+```c
+typedef enum qhw_adm_meta_key {
+	QHW_ADM_META_WORKLOAD_KIND = 1,
+	QHW_ADM_META_SESSION_ID = 2,
+	QHW_ADM_META_SCOPE_ID = 3,
+	QHW_ADM_META_DEADLINE_NS = 4,
+	QHW_ADM_META_LATEST_START_NS = 5,
+	QHW_ADM_META_LATEST_FINISH_NS = 6,
+	QHW_ADM_META_QOS_CLASS = 7,
+	QHW_ADM_META_LAYER_COUNT = 8,
+	QHW_ADM_META_BATCH_COUNT = 9,
+	QHW_ADM_META_PROVIDER_BATCHING = 10,
+	QHW_ADM_META_COMPILE_NS = 11,
+	QHW_ADM_META_LOWERING_NS = 12,
+	QHW_ADM_META_TRANSFER_NS = 13,
+	QHW_ADM_META_CONTROL_OVERHEAD_NS = 14,
+	QHW_ADM_META_PROVIDER_OVERHEAD_NS = 15,
+	QHW_ADM_META_ONE_Q_GATE_NS = 16,
+	QHW_ADM_META_TWO_Q_GATE_NS = 17,
+	QHW_ADM_META_MEASUREMENT_NS = 18,
+	QHW_ADM_META_ONE_Q_GATE_TRANSFER_NS = 19,
+	QHW_ADM_META_TWO_Q_GATE_TRANSFER_NS = 20,
+	QHW_ADM_META_MEASUREMENT_TRANSFER_NS = 21,
+	QHW_ADM_META_LOGICAL_QUBITS = 22,
+	QHW_ADM_META_LOGICAL_CYCLES = 23,
+	QHW_ADM_META_T_COUNT = 24,
+	QHW_ADM_META_T_DEPTH = 25,
+	QHW_ADM_META_TARGET_LOGICAL_ERROR_PPM = 26,
+	QHW_ADM_META_CODE_FAMILY = 27,
+	QHW_ADM_META_CODE_DISTANCE = 28,
+	QHW_ADM_META_MAGIC_STATE_COUNT = 29,
+	QHW_ADM_META_DECODER_OVERHEAD_NS = 30,
+	QHW_ADM_META_CLASSICAL_CONTROL_OVERHEAD_NS = 31,
+	QHW_ADM_META_ESTIMATOR_VERSION = 32,
+	QHW_ADM_META_OBSERVED_DEVICE_NS = 33,
+	QHW_ADM_META_CONSUMED_CREDITS = 34,
+	QHW_ADM_META_CONSUMED_RATE = 35,
+	QHW_ADM_META_UNUSED_CAPACITY = 36,
+	QHW_ADM_META_OVER_LIMIT_EVENTS = 37
+} qhw_adm_meta_key_t;
+```
 
 | Key | Purpose |
 |---|---|
 | `QHW_ADM_META_WORKLOAD_KIND` | Quantum-job or hybrid-job interpretation. |
 | `QHW_ADM_META_SESSION_ID` | External session or workflow identifier. |
+| `QHW_ADM_META_SCOPE_ID` | Site-defined accounting or policy scope. |
 | `QHW_ADM_META_DEADLINE_NS` | Deadline associated with the reservation request. |
 | `QHW_ADM_META_LATEST_START_NS` | Latest acceptable projected start time. |
 | `QHW_ADM_META_LATEST_FINISH_NS` | Latest acceptable projected finish time. |
@@ -472,6 +557,12 @@ The public metadata keys can use names such as:
 | `QHW_ADM_META_TRANSFER_NS` | Estimated or measured transfer time. |
 | `QHW_ADM_META_CONTROL_OVERHEAD_NS` | Fixed control-system overhead. |
 | `QHW_ADM_META_PROVIDER_OVERHEAD_NS` | Provider-side fixed overhead. |
+| `QHW_ADM_META_ONE_Q_GATE_NS` | Default one-qubit gate duration. |
+| `QHW_ADM_META_TWO_Q_GATE_NS` | Default two-qubit gate duration. |
+| `QHW_ADM_META_MEASUREMENT_NS` | Default measurement duration. |
+| `QHW_ADM_META_ONE_Q_GATE_TRANSFER_NS` | Default one-qubit gate transfer cost. |
+| `QHW_ADM_META_TWO_Q_GATE_TRANSFER_NS` | Default two-qubit gate transfer cost. |
+| `QHW_ADM_META_MEASUREMENT_TRANSFER_NS` | Default measurement transfer cost. |
 | `QHW_ADM_META_LOGICAL_QUBITS` | Logical qubits required by an FTQC workload. |
 | `QHW_ADM_META_LOGICAL_CYCLES` | Logical cycles or logical depth. |
 | `QHW_ADM_META_T_COUNT` | T-count for FTQC estimation. |
@@ -535,7 +626,8 @@ typedef struct qhw_adm_capacity_provider {
 | Structure | Purpose | Use |
 |---|---|---|
 | `qhw_adm_capacity_provider_t` | Holds the callback used to obtain projected capacity state. | The caller registers it with `qhw_adm_set_capacity_provider()` so the admission core can ask the control service for live device or scheduler state. |
-| `qhw_adm_capacity_snapshot_t` | Holds one capacity projection for a device and policy scope. | Returned by the provider callback and consumed by policies when evaluating or reserving capacity. |
+| `qhw_adm_capacity_snapshot_t` | Holds one external capacity projection for a device and policy scope. | Returned by the provider callback and merged with the core ledger before policy evaluation. |
+| `qhw_adm_capacity_view_t` | Holds the capacity state visible to admission policies. | Built by the core from the capacity snapshot, registered device profile, and committed reservation ledger. |
 
 `qhw_adm_capacity_snapshot_t` contains:
 
@@ -543,14 +635,15 @@ typedef struct qhw_adm_capacity_provider {
 |---|---|---|
 | `struct_size` | `size_t` | Size of the structure supplied by the caller. |
 | `device_id` | `uint64_t` | Device described by the snapshot. |
+| `scope_id` | `uint64_t` | Scope described by the snapshot. |
 | `device_state` | `qhw_adm_device_state_t` | Device availability used by admission decisions. |
 | `now_ns` | `uint64_t` | Timestamp used for projected capacity and timing values. |
 | `next_available_ns` | `uint64_t` | Earliest projected time that newly admitted work can start. |
 | `queued_baseline_units` | `uint64_t` | Queued work expressed in baseline units. |
 | `queued_estimated_ns` | `uint64_t` | Queued work expressed as estimated device time. |
 | `active_reservation_count` | `uint64_t` | Number of reservations that hold capacity. |
-| `available_credits` | `uint64_t` | Credit capacity available to credit-based policies. |
-| `available_rate` | `uint64_t` | Rate capacity available to rate-based policies. |
+| `external_credit_limit` | `uint64_t` | Optional total credit cap for the evaluated scope. Zero means no external credit cap. |
+| `external_rate_limit` | `uint64_t` | Optional total rate cap for the evaluated scope. Zero means no external rate cap. |
 | `scheduler_policy_id` | `uint64_t` | Identifier for the active scheduler policy. |
 | `confidence_ppm` | `uint32_t` | Confidence in the projection. |
 | `metadata` | `const qhw_adm_kv_t *` | Scheduler or device-specific extension values. |
@@ -560,6 +653,69 @@ The callback lets `qhw-admission` use live scheduler and device state without
 depending on a specific scheduler implementation. A runtime can populate the
 snapshot from `qhw-scheduler`, a simulator, a vendor service, telemetry, or a
 site-specific control plane.
+
+The admission core owns committed capacity state. It tracks total, reserved,
+consumed, returned, and available credits or rate units for each registered
+device and scope. The capacity provider does not commit reservations and does
+not own the admission ledger. Its snapshot is read-only input used for device
+availability, projected queue delay, and optional external caps.
+
+The core builds `qhw_adm_capacity_view_t` before calling a policy. The view
+contains the provider projection and the committed ledger fields needed by
+credit and rate policies.
+
+| Field | C type | Meaning |
+|---|---|---|
+| `struct_size` | `size_t` | Size of the structure supplied by the core. |
+| `device_id` | `uint64_t` | Device described by the view. |
+| `scope_id` | `uint64_t` | Scope described by the view. |
+| `device_state` | `qhw_adm_device_state_t` | Device availability used by admission decisions. |
+| `now_ns` | `uint64_t` | Timestamp used for projected capacity and timing values. |
+| `next_available_ns` | `uint64_t` | Earliest projected time that newly admitted work can start. |
+| `queued_baseline_units` | `uint64_t` | Queued work expressed in baseline units. |
+| `queued_estimated_ns` | `uint64_t` | Queued work expressed as estimated device time. |
+| `active_reservation_count` | `uint64_t` | Number of active reservations that hold capacity on the device. |
+| `total_credits` | `uint64_t` | Total credit capacity configured for the device. |
+| `credits_reserved` | `uint64_t` | Device-wide credits reserved in the core ledger. |
+| `credits_consumed` | `uint64_t` | Device-wide credits consumed in the core ledger. |
+| `credits_returned` | `uint64_t` | Device-wide credits returned in the core ledger. |
+| `core_available_credits` | `uint64_t` | Credits available from the core ledger before external scope caps. |
+| `external_credit_limit` | `uint64_t` | Optional total credit cap supplied by the capacity provider for the evaluated scope. |
+| `scoped_reserved_credits` | `uint64_t` | Credits already reserved in the evaluated scope. |
+| `effective_available_credits` | `uint64_t` | Credits available after applying core availability and scoped external caps. |
+| `total_rate` | `uint64_t` | Total rate capacity configured for the device. |
+| `rate_reserved` | `uint64_t` | Device-wide rate units reserved in the core ledger. |
+| `rate_consumed` | `uint64_t` | Device-wide rate units consumed in the core ledger. |
+| `rate_returned` | `uint64_t` | Device-wide rate units returned in the core ledger. |
+| `core_available_rate` | `uint64_t` | Rate available from the core ledger before external scope caps. |
+| `external_rate_limit` | `uint64_t` | Optional total rate cap supplied by the capacity provider for the evaluated scope. |
+| `scoped_reserved_rate` | `uint64_t` | Rate already reserved in the evaluated scope. |
+| `effective_available_rate` | `uint64_t` | Rate available after applying core availability and scoped external caps. |
+| `scheduler_policy_id` | `uint64_t` | Identifier for the active scheduler policy. |
+| `confidence_ppm` | `uint32_t` | Confidence in timing and capacity projections. |
+| `metadata` | `const qhw_adm_kv_t *` | Provider, scheduler, or policy extension values copied by the core. |
+| `metadata_count` | `size_t` | Number of metadata entries. |
+
+External caps are total limits for the evaluated scope, not already-available
+capacity. The core computes remaining scoped external capacity by subtracting
+the core ledger's active reservations for that same `(device_id, scope_id)`.
+Policies evaluate against the smaller of device-wide core availability and the
+remaining scoped external capacity.
+
+The capacity view carries both device-wide and scope-local counters.
+`credits_reserved`, `credits_consumed`, `credits_returned`, `rate_reserved`,
+`rate_consumed`, and `rate_returned` are device-wide ledger values. The
+`scoped_reserved_*` fields are the scope-local values used only when applying
+external scope caps. `core_available_*` is always derived from device-wide
+capacity before scoped external caps are applied. `effective_available_*` is
+the value left after applying those caps.
+
+Capacity provider metadata is returned in provider-owned memory. The provider
+keeps that memory stable until the public admission API call that invoked the
+provider returns. The core deep-copies the metadata into temporary core-owned
+storage before policy evaluation. Policy callbacks read the copied metadata for
+the duration of the public API call. A policy that stores metadata beyond the
+callback must make its own copy.
 
 Admission timing guidance is reservation-level. An accepted decision should
 include a projected start time, finish time, and confidence value for the
@@ -603,18 +759,34 @@ requests can target the device.
 | `baseline` | `qhw_adm_baseline_t` | Baseline circuit shape. |
 | `max_qubits` | `uint32_t` | Maximum supported qubit count. |
 | `max_shots` | `uint64_t` | Maximum shots per task, if known. |
+| `one_q_gate_ns` | `uint64_t` | Default one-qubit gate duration used by the generic near-term estimator. |
+| `two_q_gate_ns` | `uint64_t` | Default two-qubit gate duration used by the generic near-term estimator. |
+| `measurement_ns` | `uint64_t` | Default measurement duration used by the generic near-term estimator. |
+| `one_q_gate_transfer_ns` | `uint64_t` | Default transfer cost associated with one-qubit gate work. |
+| `two_q_gate_transfer_ns` | `uint64_t` | Default transfer cost associated with two-qubit gate work. |
+| `measurement_transfer_ns` | `uint64_t` | Default transfer cost associated with measurement work. |
+| `compile_ns` | `uint64_t` | Default compile or lowering cost for a request. |
+| `control_overhead_ns` | `uint64_t` | Default control-system setup overhead. |
+| `provider_overhead_ns` | `uint64_t` | Default provider-side fixed overhead. |
 | `total_credits` | `uint64_t` | Total credit capacity for credit policy. |
 | `device_rate` | `uint64_t` | Baseline units per time span for rate policy. |
 | `concurrent_jobs` | `uint32_t` | Target concurrency for rate-slice defaults. |
+| `default_ttl_ns` | `uint64_t` | Default reservation lease duration when the request does not provide one. |
 | `metadata` | `const qhw_adm_kv_t *` | Device-specific values used by estimators or policies. |
 | `metadata_count` | `size_t` | Number of metadata entries. |
 
-If `device_rate` is zero, the rate policy derives it from the selected
-estimator:
+If `device_rate` is zero, the core derives it while constructing
+`qhw_adm_capacity_view_t`. The core uses the selected estimator, the registered
+baseline circuit, and `time_span_ns` to compute a concrete `total_rate` before
+it calls a policy callback:
 
 ```text
-device_rate = ceil(time_span_ns / estimated_baseline_ns)
+total_rate = ceil(time_span_ns / estimated_baseline_ns)
 ```
+
+The implementation can cache the derived rate using the device profile version,
+estimator version, and baseline shape. Replacing the profile or estimator
+invalidates the cached value.
 
 ### Admission Request
 
@@ -629,9 +801,11 @@ qtask class descriptors that describe the quantum work covered by the request.
 | `device_id` | `uint64_t` | Target device registered in the admission context. |
 | `user_id` | `uint64_t` | User, account, or tenant identifier. |
 | `job_id` | `uint64_t` | External job identifier, if available. |
-| `reservation_id` | `uint64_t` | Optional caller-provided reservation identifier. |
+| `scope_id` | `uint64_t` | Site-defined accounting or policy scope. Zero means device-wide scope. |
+| `reservation_id` | `uint64_t` | Optional caller-provided reservation identifier. Zero asks the core to generate one. |
 | `workload_kind` | `qhw_adm_workload_kind_t` | Quantum-job or hybrid-job request type. |
 | `walltime_ns` | `uint64_t` | Requested job walltime. |
+| `ttl_ns` | `uint64_t` | Requested reservation lease duration. Zero selects the default TTL rule. |
 | `classical_runtime_ns` | `uint64_t` | Expected non-QPU runtime. |
 | `overhead_ns` | `uint64_t` | Runtime overhead subtracted from quantum budget. |
 | `priority` | `int64_t` | Optional admission priority. |
@@ -645,6 +819,17 @@ The quantum budget is:
 ```text
 quantum_budget_ns = walltime_ns - classical_runtime_ns - overhead_ns
 ```
+
+The core computes `quantum_budget_ns` with checked unsigned arithmetic.
+Requests where `classical_runtime_ns + overhead_ns` overflows or where
+`walltime_ns <= classical_runtime_ns + overhead_ns` are invalid and return a
+rejected decision with `QHW_ADM_REASON_WALLTIME_INFEASIBLE`. No policy sees a
+wrapped quantum budget.
+
+A caller-provided `reservation_id` must be nonzero and unique within the
+admission context. A zero `reservation_id` requests automatic allocation. The
+core-generated reservation ID is nonzero, unique within the context, and
+returned in `qhw_adm_decision_t.reservation_id` for accepted reservations.
 
 ### Qtask Class
 
@@ -739,6 +924,7 @@ The decision object is represented by `qhw_adm_decision_t`.
 | `decision` | `qhw_adm_decision_kind_t` | Accepted, delayed, or rejected result. |
 | `request_id` | `uint64_t` | Request associated with the decision. |
 | `device_id` | `uint64_t` | Device evaluated by the decision. |
+| `scope_id` | `uint64_t` | Scope used for capacity accounting. |
 | `reservation_id` | `uint64_t` | Reservation created for accepted requests. |
 | `reason_code` | `uint64_t` | Machine-readable reason. |
 | `credits_required` | `uint64_t` | Credit demand for the request. |
@@ -768,6 +954,7 @@ by `qhw_adm_reservation_t`.
 | `reservation_id` | `uint64_t` | Reservation identifier. |
 | `request_id` | `uint64_t` | Request that created the reservation. |
 | `device_id` | `uint64_t` | Device that accepted the reservation. |
+| `scope_id` | `uint64_t` | Scope charged by the reservation. |
 | `user_id` | `uint64_t` | User, account, or tenant identifier. |
 | `job_id` | `uint64_t` | External job identifier, if available. |
 | `workload_kind` | `qhw_adm_workload_kind_t` | Quantum-job or hybrid-job request type. |
@@ -776,6 +963,10 @@ by `qhw_adm_reservation_t`.
 | `credits_consumed` | `uint64_t` | Credits consumed by task-level accounting. |
 | `rate_reserved` | `uint64_t` | Rate units held by rate policy. |
 | `rate_consumed` | `uint64_t` | Rate units consumed by task-level accounting. |
+| `quantum_budget_ns` | `uint64_t` | Quantum budget copied from the accepted request and used for rate usage accounting. |
+| `device_profile_version` | `uint64_t` | Device profile version used when the reservation was created. |
+| `policy_version` | `uint64_t` | Policy instance version used when the reservation was created. |
+| `estimator_version` | `uint64_t` | Estimator instance version used when the reservation was created. |
 | `estimated_total_ns` | `uint64_t` | Estimated quantum demand. |
 | `actual_total_ns` | `uint64_t` | Actual accounted quantum usage. |
 | `unused_capacity` | `uint64_t` | Reserved capacity returned unused at release or expiration. |
@@ -785,6 +976,41 @@ by `qhw_adm_reservation_t`.
 | `expires_at_ns` | `uint64_t` | Lease expiration time. |
 | `metadata` | `const qhw_adm_kv_t *` | Reservation metadata copied from the request or policy. |
 | `metadata_count` | `size_t` | Number of metadata entries. |
+
+Reservation lifecycle is deterministic:
+
+| Operation | Valid source state | Result state | Idempotency |
+|---|---|---|---|
+| `reserve()` | none | `QHW_ADM_RESERVATION_ACTIVE` | A duplicate nonzero caller-provided `reservation_id` returns `QHW_ADM_ERR_EXISTS`. |
+| `release()` | `ACTIVE` | `RELEASED` | Releasing an already released reservation returns `QHW_ADM_OK`. |
+| `cancel()` | `ACTIVE` | `CANCELLED` | Cancelling an already cancelled reservation returns `QHW_ADM_OK`. |
+| `renew()` | `ACTIVE` | `ACTIVE` | Renewal of a terminal reservation returns `QHW_ADM_ERR_STATE`. |
+| `expire()` | `ACTIVE` with `expires_at_ns <= now_ns` | `EXPIRED` | A reservation is counted as expired once. |
+
+`RELEASED`, `CANCELLED`, and `EXPIRED` are terminal states. `release()` or
+`cancel()` on a different terminal state returns `QHW_ADM_ERR_STATE`. Lookup
+APIs can return terminal reservations until the context is destroyed or a
+future pruning API removes archived records.
+
+`created_at_ns` is taken from the capacity snapshot `now_ns` used by the
+reserve transaction. When no capacity provider is registered or the snapshot
+sets `now_ns = 0`, the context clock supplies `created_at_ns`.
+
+The reservation TTL is selected in this order:
+
+1. `qhw_adm_policy_grant_t.ttl_ns`
+2. `qhw_adm_request_t.ttl_ns`
+3. `qhw_adm_request_t.walltime_ns`
+4. `qhw_adm_device_profile_t.default_ttl_ns`
+5. no library-managed expiration when all values are zero
+
+`expires_at_ns` is `created_at_ns + ttl_ns` when a TTL is selected. A zero
+`expires_at_ns` means `qhw_adm_expire()` does not expire the reservation.
+`qhw_adm_renew()` sets `expires_at_ns = now_ns + ttl_ns` and requires a
+positive TTL.
+
+`qhw_adm_expire(ctx, 0, out_expired_count)` uses the context clock as `now_ns`.
+A nonzero `now_ns` uses the caller-provided timestamp.
 
 ### Usage Accounting Structures
 
@@ -808,6 +1034,7 @@ reservation capacity.
 | `reservation_id` | `uint64_t` | Reservation charged by the event. |
 | `task_id` | `uint64_t` | Runtime qtask identifier, if available. |
 | `class_id` | `uint64_t` | Qtask class that best describes the event. |
+| `event_time_ns` | `uint64_t` | Timestamp used for rate-window accounting. Zero asks the context clock to supply the timestamp. |
 | `estimated_ns` | `uint64_t` | Estimated device time for the event. |
 | `actual_ns` | `uint64_t` | Measured device time when known. |
 | `baseline_units` | `uint64_t` | Work expressed in baseline units. |
@@ -863,9 +1090,21 @@ The estimator converts task metadata into timing and baseline-unit estimates.
 It is a plugin surface because cost differs across hardware, control systems,
 compilation paths, calibration state, and site policy.
 
+For near-term gate-model systems, the generic baseline estimator can use one
+calculation model across different devices. Device-specific behavior comes from
+the registered device profile and estimator options. Characterization workflows
+can generate those profile values from backend information, calibration data,
+timing measurements, and provider limits. The admission library consumes the
+profile schema and does not depend on the tool that produced it.
+
 The public plugin descriptor is `qhw_adm_estimator_desc_t`:
 
 ```c
+typedef struct qhw_adm_estimator_desc qhw_adm_estimator_desc_t;
+
+typedef const qhw_adm_estimator_desc_t *(
+	*qhw_adm_estimator_plugin_fn)(void);
+
 typedef qhw_adm_rc_t (*qhw_adm_estimator_init_fn)(
 	const qhw_adm_device_profile_t *device,
 	const qhw_adm_kv_t *options,
@@ -902,7 +1141,13 @@ typedef qhw_adm_rc_t (*qhw_adm_estimator_validate_request_fn)(
 	const qhw_adm_device_profile_t *device,
 	const qhw_adm_request_t *request);
 
-typedef struct qhw_adm_estimator_desc {
+typedef qhw_adm_rc_t (*qhw_adm_estimator_record_actual_fn)(
+	void *state,
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_reservation_t *reservation,
+	const qhw_adm_actual_usage_t *actual);
+
+struct qhw_adm_estimator_desc {
 	size_t struct_size;
 	uint32_t abi_version;
 	const char *name;
@@ -914,7 +1159,8 @@ typedef struct qhw_adm_estimator_desc {
 	qhw_adm_estimator_estimate_request_fn estimate_request;
 	qhw_adm_estimator_estimate_baseline_fn estimate_baseline;
 	qhw_adm_estimator_validate_request_fn validate_request;
-} qhw_adm_estimator_desc_t;
+	qhw_adm_estimator_record_actual_fn record_actual;
+};
 ```
 
 | Structure | Purpose | Use |
@@ -934,11 +1180,36 @@ typedef struct qhw_adm_estimator_desc {
 | `estimate_request` | `qhw_adm_estimator_estimate_request_fn` | Estimate a whole request. |
 | `estimate_baseline` | `qhw_adm_estimator_estimate_baseline_fn` | Estimate the configured baseline. |
 | `validate_request` | `qhw_adm_estimator_validate_request_fn` | Validate request metadata. |
+| `record_actual` | `qhw_adm_estimator_record_actual_fn` | Optional feedback path for measured usage records. Required when `QHW_ADM_EST_CAP_FEEDBACK` is set. |
 
 If `estimate_request()` is provided, the core uses it. Whole-request estimation
 can account for batching, repeated compilation, shared transfer costs, and
 provider-side execution behavior. If it is absent, the core sums
 `count * estimate_task()` across the task classes.
+
+`qhw_adm_record_actual()` stores measured usage in the core telemetry record.
+When the selected estimator advertises `QHW_ADM_EST_CAP_FEEDBACK`, the core
+also calls `record_actual()` on the estimator. The callback receives the
+reservation and measured usage record and updates estimator-local calibration
+state.
+
+Core telemetry commit and estimator feedback are separate steps.
+`qhw_adm_record_actual()` records the measured usage once in core reservation
+state before invoking the estimator feedback callback. If the estimator
+callback fails, the core keeps the telemetry record, stores the feedback error
+in the diagnostic state, and returns `QHW_ADM_ERR_ESTIMATOR`. A retry with the
+same nonzero `task_id` and identical actual record retries the estimator
+feedback without adding another telemetry record. A retry with conflicting
+actual data returns `QHW_ADM_ERR_STATE`.
+
+Estimator feedback callbacks must be atomic or idempotent by
+`(reservation_id, task_id)`. If a callback returns an error after updating
+estimator-local calibration state, a retry for the same nonzero `task_id` must
+not apply the same feedback twice. Estimators that cannot provide that
+guarantee should complete feedback internally before returning success, and
+should leave state unchanged before returning an error. For `task_id = 0`, the
+core treats each feedback record as a distinct anonymous event and does not
+provide retry idempotency.
 
 The baseline estimator should use configurable timing fields:
 
@@ -955,18 +1226,32 @@ transfer_ns =
   + measurement_transfer_ns
 
 total_ns =
-  execution_ns + transfer_ns + compile_ns + control_overhead_ns
+  execution_ns + transfer_ns + compile_ns
+  + control_overhead_ns + provider_overhead_ns
 ```
 
-Provider estimators can replace this with measured timing, backend target
-properties, calibration-derived timing, control-system models, or external
-resource-estimation tools.
+The generic estimator reads these timing values from
+`qhw_adm_device_profile_t`. Matching metadata keys can override or refine the
+profile values for a specific request, qtask class, or estimator configuration.
+Topology-specific and per-edge timing data should remain metadata or
+estimator-private configuration until a common portable representation is
+needed in the public profile.
+
+Additional estimator plugins are useful when the calculation model changes.
+Examples include provider-side batching, topology-dependent routing, per-edge
+gate durations, non-linear compilation cost, fault-tolerant resource models,
+and providers that return calibrated execution-time estimates directly.
 
 External estimator plugins are shared objects. The caller can load one directly
 with `qhw_adm_load_estimator(ctx, path)`, or add a directory to the estimator
 search path and select the estimator by name. Loading by explicit path is useful
 for tests and development. Search paths are better for site deployments where
 estimators are installed independently from the core library.
+
+Each estimator plugin shared object exports
+`QHW_ADM_ESTIMATOR_PLUGIN_SYMBOL`. The symbol has type
+`qhw_adm_estimator_plugin_fn` and returns a pointer to a static
+`qhw_adm_estimator_desc_t`.
 
 ## Policy Semantics
 
@@ -987,25 +1272,55 @@ Configuration:
 | Field | Meaning |
 |---|---|
 | `total_credits` | Total credits available on the device. |
-| `reservation_ttl_ns` | Lease duration for accepted reservations. |
-| `allow_overcommit` | Testing option that permits controlled overcommit. |
+| `reservation_ttl_ns` | Policy default used to fill `qhw_adm_policy_grant_t.ttl_ns` for accepted reservations. |
+| `allow_overcommit` | Enable bounded overcommit for testing or explicit site policy. |
+| `overcommit_credits` | Maximum credits that can be admitted beyond `total_credits` when overcommit is enabled. |
+| `overcommit_ppm` | Optional overcommit limit as parts per million of `total_credits`. |
 
 Credit demand is:
 
 ```text
 credits_required = ceil(estimated_total_ns / estimated_baseline_ns)
+scoped_external_credit_remaining =
+  unbounded if external_credit_limit == 0
+  else max(0, external_credit_limit - scoped_reserved_credits)
+effective_available_credits =
+  min_nonzero(core_available_credits, scoped_external_credit_remaining)
+configured_overcommit =
+  min_nonzero(overcommit_credits,
+              floor(total_credits * overcommit_ppm / 1000000))
+effective_credit_limit =
+  total_credits + configured_overcommit
+```
+
+When scoped external credit remaining is unbounded, effective available credits
+equals core available credits. `min_nonzero(a, b)` returns the nonzero value
+when one bounded input is zero and the minimum when both bounded inputs are
+nonzero.
+The core computes these values in `qhw_adm_capacity_view_t` before invoking
+the selected policy.
+
+When `allow_overcommit` is false, `effective_credit_limit` equals
+`total_credits`. When it is true, the core keeps `credits_reserved` as the
+committed reservation total and permits it to exceed `total_credits` up to
+`effective_credit_limit`. The core computes `core_available_credits` using
+saturating arithmetic:
+
+```text
+core_available_credits =
+  max(0, effective_credit_limit - credits_reserved)
 ```
 
 Decision rules:
 
 | Condition | Decision |
 |---|---|
-| `credits_required > total_credits` | `REJECTED` |
-| `credits_required > available_credits` | `DELAYED` |
+| `credits_required > effective_credit_limit` | `REJECTED` |
+| `credits_required > effective_available_credits` | `DELAYED` |
 | Otherwise | `ACCEPTED` |
 
-Accepted reservations subtract from `available_credits`. Releasing, expiring,
-or cancelling a reservation returns the held credits.
+Accepted reservations subtract from the core credit ledger. Releasing,
+expiring, or cancelling a reservation returns the held credits to that ledger.
 
 Credit policy should account for both consumed and unused credits. A
 reservation that consumes more than the admitted credits enters an over-limit
@@ -1018,6 +1333,13 @@ user, account, or site-defined grouping key.
 Rate admission uses a finite throughput budget expressed as baseline units per
 time span.
 
+The rate policy receives a concrete rate budget in `qhw_adm_capacity_view_t`.
+When the device profile has `device_rate != 0`, the core uses that value. When
+the profile has `device_rate == 0`, the core derives the rate from the
+selected estimator while building the capacity view. Policy callbacks therefore
+evaluate `total_rate`, `core_available_rate`, and `effective_available_rate`
+without running the estimator themselves.
+
 Configuration:
 
 | Field | Meaning |
@@ -1026,12 +1348,12 @@ Configuration:
 | `device_rate` | Baseline units executable per window. |
 | `concurrent_jobs` | Target concurrency for default slices. |
 | `rate_slice` | Minimum allocatable rate unit. |
-| `reservation_ttl_ns` | Lease duration for accepted reservations. |
+| `reservation_ttl_ns` | Policy default used to fill `qhw_adm_policy_grant_t.ttl_ns` for accepted reservations. |
 
 `rate_slice` defaults to:
 
 ```text
-rate_slice = max(1, floor(device_rate / concurrent_jobs))
+rate_slice = max(1, floor(total_rate / concurrent_jobs))
 ```
 
 Rate demand is:
@@ -1039,21 +1361,33 @@ Rate demand is:
 ```text
 rate_required =
   ceil((baseline_units_required * time_span_ns) / quantum_budget_ns)
+
+scoped_external_rate_remaining =
+  unbounded if external_rate_limit == 0
+  else max(0, external_rate_limit - scoped_reserved_rate)
+effective_available_rate =
+  min_nonzero(core_available_rate, scoped_external_rate_remaining)
 ```
+
+When scoped external rate remaining is unbounded, effective available rate
+equals core available rate.
+The core computes these values in `qhw_adm_capacity_view_t` before invoking
+the selected policy.
 
 Decision rules:
 
 | Condition | Decision |
 |---|---|
 | `quantum_budget_ns <= 0` | `REJECTED` |
-| `rate_required > device_rate` | `REJECTED` |
-| `rate_required > available_rate` | `DELAYED` |
-| `available_rate < rate_slice` | `DELAYED` |
+| `rate_required > total_rate` | `REJECTED` |
+| `rate_required > effective_available_rate` | `DELAYED` |
+| `effective_available_rate < rate_slice` | `DELAYED` |
 | Otherwise | `ACCEPTED` |
 
 Accepted reservations allocate at least one `rate_slice`. Requests that need
 more receive the smallest multiple of `rate_slice` that satisfies
-`rate_required`, bounded by available capacity.
+`rate_required`, bounded by effective available capacity. Accepted
+reservations subtract from the core rate ledger.
 
 Rate policy should track consumed rate against the admitted rate slice. Work
 that exceeds the reserved rate can be rejected, delayed, throttled, or charged
@@ -1061,15 +1395,58 @@ against additional capacity. Reservations that consistently hold rate without
 using it should be visible to site policy so future requests can be adjusted or
 limited.
 
+Rate accounting is window-based. `rate_reserved` is the reservation's
+throughput allocation for the current policy time span. `rate_consumed` records
+the amount of that allocation used inside the current window.
+`reservation_quantum_budget_ns` is copied into the reservation from the
+accepted request's `quantum_budget_ns`. A qtask usage event maps to rate units
+as:
+
+```text
+usage_rate_units =
+  ceil((usage_baseline_units * time_span_ns) / reservation_quantum_budget_ns)
+```
+
+The core adds `usage_rate_units` to `rate_consumed` for the reservation's
+current window. `qhw_adm_usage_t.event_time_ns` selects the accounting window.
+When `event_time_ns` is zero, the context clock supplies the timestamp before
+the usage event is evaluated. The core advances reservation-local rate windows
+before applying the event. Window-local `rate_consumed` is aged or reset
+according to policy configuration, while aggregate actual usage remains
+available for compliance and feedback. A reservation is over limit when its
+current-window `rate_consumed` exceeds `rate_reserved`.
+
 ## Policy Plugin Interface
 
 Admission policies are loadable plugins. The core owns request parsing,
-reservation storage, threading, and error reporting. A policy plugin owns the
-admission algorithm.
+reservation storage, committed capacity ledgers, threading, and error
+reporting. A policy plugin owns the admission algorithm and policy-local
+configuration. Policy plugins return proposed grants and decisions. The core
+commits capacity after the pending reservation record is complete and before
+the record is published.
 
 The public plugin descriptor is `qhw_adm_policy_desc_t`:
 
 ```c
+typedef struct qhw_adm_policy_desc qhw_adm_policy_desc_t;
+
+typedef const qhw_adm_policy_desc_t *(
+	*qhw_adm_policy_plugin_fn)(void);
+
+typedef struct qhw_adm_policy_grant {
+	size_t struct_size;
+	uint64_t device_id;
+	uint64_t scope_id;
+	uint64_t credits_granted;
+	uint64_t rate_granted;
+	uint64_t baseline_units_granted;
+	uint64_t ttl_ns;
+	uint64_t reason_code;
+	qhw_adm_compliance_action_t compliance_action;
+	const qhw_adm_kv_t *metadata;
+	size_t metadata_count;
+} qhw_adm_policy_grant_t;
+
 typedef qhw_adm_rc_t (*qhw_adm_policy_init_fn)(
 	const qhw_adm_device_profile_t *device,
 	const qhw_adm_kv_t *options,
@@ -1088,7 +1465,7 @@ typedef qhw_adm_rc_t (*qhw_adm_policy_evaluate_fn)(
 	const qhw_adm_device_profile_t *device,
 	const qhw_adm_request_t *request,
 	const qhw_adm_estimate_t *estimate,
-	const qhw_adm_capacity_snapshot_t *capacity,
+	const qhw_adm_capacity_view_t *capacity,
 	qhw_adm_decision_t *out_decision);
 
 typedef qhw_adm_rc_t (*qhw_adm_policy_reserve_fn)(
@@ -1096,7 +1473,8 @@ typedef qhw_adm_rc_t (*qhw_adm_policy_reserve_fn)(
 	const qhw_adm_device_profile_t *device,
 	const qhw_adm_request_t *request,
 	const qhw_adm_estimate_t *estimate,
-	const qhw_adm_capacity_snapshot_t *capacity,
+	const qhw_adm_capacity_view_t *capacity,
+	qhw_adm_policy_grant_t *out_grant,
 	qhw_adm_decision_t *out_decision);
 
 typedef qhw_adm_rc_t (*qhw_adm_policy_release_fn)(
@@ -1117,10 +1495,11 @@ typedef qhw_adm_rc_t (*qhw_adm_policy_return_usage_fn)(
 
 typedef qhw_adm_rc_t (*qhw_adm_policy_capacity_fn)(
 	void *state,
-	uint64_t device_id,
-	qhw_adm_capacity_snapshot_t *out_capacity);
+	const qhw_adm_device_profile_t *device,
+	const qhw_adm_capacity_view_t *core_view,
+	qhw_adm_capacity_view_t *out_capacity);
 
-typedef struct qhw_adm_policy_desc {
+struct qhw_adm_policy_desc {
 	size_t struct_size;
 	uint32_t abi_version;
 	const char *name;
@@ -1134,12 +1513,29 @@ typedef struct qhw_adm_policy_desc {
 	qhw_adm_policy_consume_fn consume;
 	qhw_adm_policy_return_usage_fn return_usage;
 	qhw_adm_policy_capacity_fn capacity;
-} qhw_adm_policy_desc_t;
+};
 ```
 
 | Structure | Purpose | Use |
 |---|---|---|
+| `qhw_adm_policy_grant_t` | Holds the capacity grant proposed by a policy. | The core copies the grant into a pending reservation transaction, commits the core ledger, and stores the committed values in the reservation record. |
 | `qhw_adm_policy_desc_t` | Describes one admission policy plugin and its callback surface. | The core reads this descriptor after loading a policy shared object, then calls its callbacks to evaluate, reserve, release, and account for usage. |
+
+`qhw_adm_policy_grant_t` contains:
+
+| Field | C type | Meaning |
+|---|---|---|
+| `struct_size` | `size_t` | Size of the structure supplied by the core. |
+| `device_id` | `uint64_t` | Device receiving the grant. |
+| `scope_id` | `uint64_t` | Scope charged by the grant. |
+| `credits_granted` | `uint64_t` | Credits committed if the reservation transaction succeeds. |
+| `rate_granted` | `uint64_t` | Rate units committed if the reservation transaction succeeds. |
+| `baseline_units_granted` | `uint64_t` | Baseline units represented by the grant. |
+| `ttl_ns` | `uint64_t` | Lease duration selected by policy. Zero uses the core TTL rule. |
+| `reason_code` | `uint64_t` | Machine-readable policy reason. |
+| `compliance_action` | `qhw_adm_compliance_action_t` | Initial action associated with the grant. |
+| `metadata` | `const qhw_adm_kv_t *` | Policy metadata copied into the reservation record. |
+| `metadata_count` | `size_t` | Number of metadata entries. |
 
 | Field | C type | Meaning |
 |---|---|---|
@@ -1151,14 +1547,43 @@ typedef struct qhw_adm_policy_desc {
 | `destroy` | `qhw_adm_policy_destroy_fn` | Destroy policy-local state. |
 | `configure` | `qhw_adm_policy_configure_fn` | Apply policy options. |
 | `evaluate` | `qhw_adm_policy_evaluate_fn` | Compute a decision without mutating capacity. |
-| `reserve` | `qhw_adm_policy_reserve_fn` | Admit a request and update policy-local capacity. |
-| `release` | `qhw_adm_policy_release_fn` | Return capacity held by a reservation. |
+| `reserve` | `qhw_adm_policy_reserve_fn` | Compute the grant needed to admit a request. |
+| `release` | `qhw_adm_policy_release_fn` | Observe a terminal reservation transition and update policy-local statistics. |
 | `consume` | `qhw_adm_policy_consume_fn` | Optional task-level usage accounting. |
 | `return_usage` | `qhw_adm_policy_return_usage_fn` | Optional task-level return path. |
-| `capacity` | `qhw_adm_policy_capacity_fn` | Report total and available policy capacity. |
+| `capacity` | `qhw_adm_policy_capacity_fn` | Report or annotate the core-computed capacity view for diagnostics. |
+
+The `capacity` callback receives a core-computed view. The core initializes
+`out_capacity` as a copy of `core_view` before invoking the callback. A policy
+may add policy metadata, confidence values, or diagnostic projections. It must
+leave committed ledger fields unchanged. The core remains the source of truth
+for totals, reservations, consumed capacity, returned capacity, and effective
+availability.
+
+Policy callback outputs are copied by the core. A policy can return metadata or
+message pointers from plugin-owned memory, static memory, or policy-local
+scratch storage. Those pointers must remain valid until the callback returns.
+The core deep-copies pointer-backed fields before exposing a decision, grant,
+or capacity view outside the callback path.
 
 The standard distribution installs `unlimited`, `credit`, and `rate` policy
 plugins.
+
+Reservation commit is a core transaction. `qhw_adm_reserve()` validates the
+request, estimates demand, obtains a capacity snapshot, builds a capacity view,
+and calls the selected policy to fill `qhw_adm_policy_grant_t`. The core then
+validates the grant. A grant is valid only when `device_id` and `scope_id`
+match the evaluated request, granted credits and rate units fit inside the
+capacity view, and baseline units are consistent with the request estimate.
+Invalid grants return `QHW_ADM_ERR_POLICY` and produce a rejected decision with
+`QHW_ADM_REASON_POLICY_FAILED`. After grant validation, the core builds a
+complete pending reservation record, including copied metadata and selected
+policy, estimator, and profile versions. After the pending record is complete,
+the core checks and commits the capacity ledger. The final step publishes the
+reservation into the reservation table in `ACTIVE` state. If any step before
+publication fails, the core restores the ledger to its pre-transaction values
+and no reservation becomes visible. Policy plugins do not need a rollback
+callback for failed publication because they do not mutate committed capacity.
 
 ## Public C API
 
@@ -1166,6 +1591,71 @@ The public C API uses opaque handles for library-managed objects and versioned
 value structures for data exchange. Callers allocate input and output
 structures, set `struct_size`, and pass pointers to the library. The library
 copies descriptors that become context-owned state.
+
+Output structures follow view semantics unless an API explicitly says
+otherwise. Scalar fields are copied into the caller-provided output structure.
+Pointer fields such as `message` and `metadata` point to immutable
+context-owned memory. Those views remain valid until the next mutating call on
+the same context, until the object they describe is removed, or until
+`qhw_adm_destroy()`. Callers must not free or modify returned pointers. SWIG
+wrappers copy pointer-backed fields into Python-owned objects before returning
+to user code.
+
+Policy-produced output uses the same public view rule. Policy callbacks may
+fill `message` or `metadata` fields with plugin-owned pointers that remain
+valid until the callback returns. The core copies those pointer-backed fields
+into context-owned storage before returning a decision, publishing a
+reservation, or returning a capacity view. Public callers never receive raw
+plugin-owned pointers.
+
+### Public ABI Constants
+
+The public headers define ABI versions, plugin export symbols, capability
+bits, reason codes, metadata keys, and configuration flags as fixed constants.
+
+```c
+#define QHW_ADM_ABI_VERSION 1U
+#define QHW_ADM_POLICY_PLUGIN_SYMBOL "qhw_adm_policy_plugin"
+#define QHW_ADM_ESTIMATOR_PLUGIN_SYMBOL "qhw_adm_estimator_plugin"
+
+#define QHW_ADM_POLICY_CAP_USAGE_ACCOUNTING (1ULL << 0)
+#define QHW_ADM_POLICY_CAP_CAPACITY_REPORT  (1ULL << 1)
+#define QHW_ADM_POLICY_CAP_SCOPED_CAPACITY  (1ULL << 2)
+
+#define QHW_ADM_EST_CAP_TASK       (1ULL << 0)
+#define QHW_ADM_EST_CAP_REQUEST    (1ULL << 1)
+#define QHW_ADM_EST_CAP_BASELINE   (1ULL << 2)
+#define QHW_ADM_EST_CAP_FEEDBACK   (1ULL << 3)
+
+#define QHW_ADM_CONFIG_MERGE       (1ULL << 0)
+#define QHW_ADM_CONFIG_REPLACE     (1ULL << 1)
+```
+
+The public header defines these reason codes:
+
+```c
+typedef enum qhw_adm_reason {
+	QHW_ADM_REASON_NONE = 0,
+	QHW_ADM_REASON_ACCEPTED = 1,
+	QHW_ADM_REASON_DEVICE_NOT_FOUND = 2,
+	QHW_ADM_REASON_DEVICE_UNAVAILABLE = 3,
+	QHW_ADM_REASON_INVALID_REQUEST = 4,
+	QHW_ADM_REASON_ESTIMATOR_FAILED = 5,
+	QHW_ADM_REASON_POLICY_FAILED = 6,
+	QHW_ADM_REASON_INSUFFICIENT_CREDITS = 7,
+	QHW_ADM_REASON_INSUFFICIENT_RATE = 8,
+	QHW_ADM_REASON_REQUEST_TOO_LARGE = 9,
+	QHW_ADM_REASON_WALLTIME_INFEASIBLE = 10,
+	QHW_ADM_REASON_RESERVATION_NOT_FOUND = 11,
+	QHW_ADM_REASON_RESERVATION_TERMINAL = 12,
+	QHW_ADM_REASON_OVER_LIMIT = 13,
+	QHW_ADM_REASON_UNSUPPORTED = 14,
+	QHW_ADM_REASON_OBJECT_EXISTS = 15,
+	QHW_ADM_REASON_ACTIVE_RESERVATIONS = 16,
+	QHW_ADM_REASON_SCOPE_LIMIT = 17,
+	QHW_ADM_REASON_USAGE_NOT_AUTHORIZED = 18
+} qhw_adm_reason_t;
+```
 
 ### Public Handles
 
@@ -1194,7 +1684,8 @@ typedef enum qhw_adm_rc {
 	QHW_ADM_ERR_STATE = -4,
 	QHW_ADM_ERR_POLICY = -5,
 	QHW_ADM_ERR_ESTIMATOR = -6,
-	QHW_ADM_ERR_UNSUPPORTED = -7
+	QHW_ADM_ERR_UNSUPPORTED = -7,
+	QHW_ADM_ERR_EXISTS = -8
 } qhw_adm_rc_t;
 
 typedef enum qhw_adm_threading {
@@ -1269,6 +1760,87 @@ that case the context uses `QHW_ADM_THREAD_USER`. `qhw_adm_destroy()` releases
 all context-owned device profiles, plugin instances, reservations, and copied
 metadata.
 
+### Configuration APIs
+
+```c
+qhw_adm_rc_t qhw_adm_load_config(
+	qhw_adm_t *ctx,
+	const char *path,
+	uint64_t flags);
+
+qhw_adm_rc_t qhw_adm_load_config_string(
+	qhw_adm_t *ctx,
+	const char *yaml_text,
+	size_t yaml_len,
+	uint64_t flags);
+```
+
+Configuration files use YAML. The schema contains device profiles, baseline
+circuits, timing fields, policy selection, estimator selection, policy options,
+estimator options, and plugin search paths. `QHW_ADM_CONFIG_MERGE` merges the
+loaded configuration into the current context. `QHW_ADM_CONFIG_REPLACE`
+replaces devices, plugin paths, and selected policy or estimator settings
+named by the loaded file. Runtime API calls made after configuration loading
+override YAML-loaded defaults.
+
+The configuration mode flags are mutually exclusive. A call that sets both
+`QHW_ADM_CONFIG_MERGE` and `QHW_ADM_CONFIG_REPLACE` returns
+`QHW_ADM_ERR_INVAL`. A call that sets neither flag also returns
+`QHW_ADM_ERR_INVAL`. The v1 ABI rejects unknown flag bits with
+`QHW_ADM_ERR_INVAL`.
+
+Configuration loading is atomic at the context level. The loader parses the
+YAML, validates every referenced plugin, builds replacement device profiles,
+and prepares policy and estimator selections before mutating the live context.
+If any step fails, the context remains unchanged. `QHW_ADM_CONFIG_REPLACE`
+uses the same active-reservation rules as the direct runtime APIs. A device
+profile, selected policy, or selected estimator cannot be replaced while that
+device has active reservations. Plugin path replacement is also staged with the
+rest of the configuration, so partial path updates are not published after a
+failure.
+
+The YAML shape is:
+
+```yaml
+plugin_paths:
+  policies: []
+  estimators: []
+devices:
+  - device_id: 1
+    max_qubits: 20
+    max_shots: 5000
+    time_span_ns: 60000000000
+    default_ttl_ns: 0
+    baseline:
+      qubit_count: 10
+      depth: 100
+      one_q_gate_count: 100
+      two_q_gate_count: 100
+      measurement_count: 10
+      shots: 1024
+    timing:
+      one_q_gate_ns: 0
+      two_q_gate_ns: 0
+      measurement_ns: 0
+      one_q_gate_transfer_ns: 0
+      two_q_gate_transfer_ns: 0
+      measurement_transfer_ns: 0
+      compile_ns: 0
+      control_overhead_ns: 0
+      provider_overhead_ns: 0
+    credit:
+      total_credits: 0
+    rate:
+      device_rate: 0
+      concurrent_jobs: 1
+    estimator:
+      name: baseline
+      options: {}
+    policy:
+      name: unlimited
+      options: {}
+```
+
 ### Device Configuration APIs
 
 ```c
@@ -1286,10 +1858,12 @@ qhw_adm_rc_t qhw_adm_get_device(
 	qhw_adm_device_profile_t *out_profile);
 ```
 
-`qhw_adm_register_device()` installs or replaces the admission profile for one
-device. `qhw_adm_unregister_device()` succeeds only when no active reservation
-references that device. `qhw_adm_get_device()` copies the registered profile
-into caller-provided storage.
+`qhw_adm_register_device()` installs a profile for a new device or replaces an
+existing profile when the device has no active reservations. Replacing a
+profile increments the device profile version. `qhw_adm_unregister_device()`
+succeeds only when no active reservation references that device.
+`qhw_adm_get_device()` writes scalar profile fields into caller-provided
+storage and returns context-owned views for pointer fields.
 
 ### Policy And Estimator APIs
 
@@ -1330,6 +1904,11 @@ qhw_adm_rc_t qhw_adm_set_estimator(
 Policy and estimator selection is per device. The caller loads plugin shared
 objects explicitly or adds search paths, then selects the loaded plugin by
 name. Options are copied into policy-owned or estimator-owned configuration.
+Changing the selected policy or estimator is allowed only when the device has
+no active reservations. Each successful selection increments the corresponding
+device policy or estimator version. Reservations store the versions used at
+admission time, and lifecycle or usage accounting validates that the reservation
+continues to refer to those stored instances.
 
 ### Capacity Provider APIs
 
@@ -1342,13 +1921,23 @@ qhw_adm_rc_t qhw_adm_get_capacity(
 	qhw_adm_t *ctx,
 	uint64_t device_id,
 	uint64_t scope_id,
-	qhw_adm_capacity_snapshot_t *out_snapshot);
+	qhw_adm_capacity_view_t *out_capacity);
 ```
 
 The capacity provider lets the admission context incorporate projected
 scheduler or device state. `scope_id` is a caller-defined grouping key, such as
 an account, reservation, queue, or site policy scope. A zero scope means
-device-wide capacity.
+device-wide capacity. `qhw_adm_evaluate()` and `qhw_adm_reserve()` pass
+`qhw_adm_request_t.scope_id` to the capacity provider and charge accepted
+reservations to the same scope.
+
+`qhw_adm_get_capacity()` returns the same core capacity view that policy
+callbacks receive. The view includes committed ledger totals, reserved
+capacity, consumed capacity, returned capacity, scoped external caps, and
+effective available capacity. Pointer fields in `out_capacity` follow the
+standard output-view lifetime rule. When the selected policy implements
+`qhw_adm_policy_capacity_fn`, the core invokes it after constructing the core
+view and before returning the result.
 
 ### Reservation Lifecycle APIs
 
@@ -1381,6 +1970,7 @@ qhw_adm_rc_t qhw_adm_cancel(
 qhw_adm_rc_t qhw_adm_renew(
 	qhw_adm_t *ctx,
 	uint64_t reservation_id,
+	uint64_t now_ns,
 	uint64_t ttl_ns);
 
 qhw_adm_rc_t qhw_adm_expire(
@@ -1393,7 +1983,9 @@ qhw_adm_rc_t qhw_adm_expire(
 `qhw_adm_reserve()` performs the same evaluation and creates a reservation when
 the policy accepts the request. `release`, `cancel`, `renew`, and `expire`
 update reservation state and return or adjust held capacity according to the
-active policy.
+policy instance recorded on the reservation. `qhw_adm_get_reservation()`
+writes scalar reservation fields into caller-provided storage and returns
+context-owned views for pointer fields.
 
 ### Usage Accounting APIs
 
@@ -1433,9 +2025,47 @@ qhw_adm_rc_t qhw_adm_record_actual(
 
 The Quantum Resource Control Service uses these APIs when enforcing an admitted
 reservation envelope. `authorize_usage()` checks a proposed event and reports
-the policy action without charging it. `consume()` charges the event. Policies
-that do not perform task-level accounting return `QHW_ADM_OK` and leave usage
-counters unchanged.
+the policy action without charging it. The controller calls it before inserting
+the qtask into the scheduler. A delayed, rejected, throttled, or terminate
+action prevents the qtask from consuming device capacity.
+
+The `reservation_id` function argument identifies the reservation being
+updated. The `reservation_id` field inside `qhw_adm_usage_t` or
+`qhw_adm_actual_usage_t` may be zero or may match the function argument. A
+nonzero payload `reservation_id` that differs from the function argument
+returns `QHW_ADM_ERR_INVAL`. Before storing idempotency records, the core
+normalizes a zero payload `reservation_id` to the function argument.
+
+`consume()` charges the event against the reservation envelope. The controller
+calls it after the scheduler selects the qtask and before submitting the qtask
+to the device. `record_actual()` runs after device completion and updates
+measured usage, estimator feedback, and compliance state. `return_usage()`
+returns pre-charged capacity for cancellation, failed execution, partial
+execution, or shot-sliced work that did not use the charged amount.
+
+Usage accounting is idempotent when `task_id` is nonzero. The core tracks
+usage events by `(reservation_id, task_id)`. Repeating `consume()` with the
+same nonzero `task_id` and identical usage returns the previous decision
+without charging capacity again. Repeating it with different usage returns
+`QHW_ADM_ERR_STATE`. `return_usage()` returns capacity once for a consumed
+task. Returning usage for an unconsumed nonzero `task_id` returns
+`QHW_ADM_ERR_STATE`. Returning more credits, rate units, or baseline units than
+were consumed for that task returns `QHW_ADM_ERR_INVAL`. A repeated return for
+the same task is accepted without returning capacity again. `record_actual()`
+stores one actual record per nonzero `task_id`; a repeated identical record is
+accepted, while a conflicting record returns `QHW_ADM_ERR_STATE`. A usage event
+with `task_id = 0` is anonymous and is processed as a new event on every call.
+`authorize_usage()` is a dry-run check and does not create an idempotency
+record.
+
+Usage equality is based on canonical scalar and metadata comparison. The core
+resolves `event_time_ns = 0` to a concrete context-clock timestamp before it
+stores an idempotency record. Other zero-valued optional scalar fields are
+normalized before comparison. Metadata arrays are compared after sorting by key
+and value type. Duplicate metadata keys are invalid for idempotent usage events
+and return `QHW_ADM_ERR_INVAL`. String metadata compares by byte value after
+UTF-8 validation. Integer, boolean, and double metadata compare by their typed
+value. Binary metadata, if added, compares by length and bytes.
 
 ## Python Binding
 
@@ -1467,14 +2097,33 @@ The implementation should support two threading modes:
 | `QHW_ADM_THREAD_SAFE` | The library protects context state internally. |
 
 Internal locking should cover reservation tables, capacity counters, policy
-state, and estimator state. Policy plugins should receive enough context to
-use the core lock discipline rather than inventing their own incompatible
-state protection.
+state, and estimator state. Policy plugins operate inside the core lock
+discipline through the callback rules below.
+
+In `QHW_ADM_THREAD_SAFE` mode, public APIs acquire the context lock before
+reading or mutating context-owned state. Policy and estimator callbacks are
+called while the context lock is held, and plugins must return without calling
+back into qhw-admission on the same context. Plugins should avoid blocking I/O
+inside callbacks. A plugin that needs external state should receive it through
+configuration or through the capacity view supplied by the core.
+
+Capacity-provider callbacks are invoked without holding the context lock. The
+core deep-copies the returned snapshot and its metadata, then acquires the
+context lock and validates that the target device and scope still exist before
+it evaluates or commits a reservation. The copied snapshot metadata remains
+valid for the duration of the public API call. This lock order prevents
+deadlocks with controller code that may already hold its own service lock when
+constructing a snapshot.
 
 ## Data Structures
 
-The implementation uses reusable data structures for maps, heaps, and ordered
-indexes. Large tables avoid linear scans on hot paths.
+The implementation uses `qhw-datastructures` for internal containers. Hash
+tables, heaps, lists, RB trees, and rings should come from that library instead
+of being reimplemented in qhw-admission. This keeps common container behavior,
+testing, and performance assumptions in one place.
+
+The admission public API uses qhw-admission structures. Container types remain
+private implementation details.
 
 Recommended private structures:
 
@@ -1486,8 +2135,9 @@ Recommended private structures:
 | Plugin registry hash table | Fast policy and estimator lookup by name. | Used when selecting a loaded policy or estimator for a registered device. |
 
 `evaluate()` can perform temporary calculations without inserting into the
-reservation table. `reserve()` should insert reservation state only after the
-policy decision and capacity update succeed.
+reservation table. `reserve()` publishes a reservation only after the pending
+record is complete and the core capacity ledger has been committed. A failure
+before publication restores the ledger to its pre-transaction values.
 
 ## Error Handling
 
@@ -1508,11 +2158,18 @@ Representative status codes:
 | `QHW_ADM_ERR_POLICY` | Policy plugin rejected the operation. |
 | `QHW_ADM_ERR_ESTIMATOR` | Estimator failed. |
 | `QHW_ADM_ERR_UNSUPPORTED` | Requested feature is unsupported. |
+| `QHW_ADM_ERR_EXISTS` | Requested object already exists. |
 
 ## Tests
 
 The repository should include C and Python tests as part of the standard
 project structure.
+
+Each implementation phase should leave a working slice of the library. When a
+phase adds public C APIs or public structures, the same phase updates the SWIG
+interface, Python wrapper, C unit tests, and Python unit tests. Later phases can
+extend those tests, but public APIs should not remain unwrapped until the final
+packaging phase.
 
 C tests should cover:
 
@@ -1540,53 +2197,352 @@ Python tests should cover:
 
 ## Initial Implementation Phases
 
+Each phase ends with C and Python unit tests that exercise the public surface
+available at that point. Tests can grow as later phases add policies,
+accounting paths, and richer wrappers.
+
 ### Phase 1: Skeleton
 
 - Add repository build files.
+- Add `qhw-datastructures` as a git submodule under
+  `external/qhw-datastructures`.
+- Wire CMake to build `external/qhw-datastructures` with the admission build.
+- Link the admission core library and C tests against the qhw-datastructures
+  target.
+- Use qhw-datastructures containers for internal maps, heaps, lists, RB trees,
+  and rings.
+- Add SWIG build support.
+- Add the initial SWIG interface for context APIs, status codes, threading
+  mode, and diagnostic strings.
+- Add the initial Python package skeleton.
 - Add public headers.
+- Define public ABI constants, plugin export symbols, capability bits, reason
+  codes, metadata keys, configuration flags, and status codes.
 - Add opaque handles and core data structures.
-- Implement context lifecycle and error handling.
-- Add C tests for creation and validation.
+- Implement `qhw_adm_create()`.
+- Validate `out_ctx`, `qhw_adm_attr_t.struct_size`, threading mode, and
+  context options.
+- Use `QHW_ADM_THREAD_USER` when `attr == NULL`.
+- Allocate the context and initialize copied context options, empty device
+  registry, empty reservation table, empty policy registry, empty estimator
+  registry, diagnostic storage, and lock state.
+- Roll back all partially initialized context state if any creation step fails.
+- Implement `qhw_adm_destroy()`.
+- Release copied options, registered device profiles, reservation records,
+  loaded policy instances, loaded estimator instances, diagnostic storage, and
+  lock state.
+- Define `qhw_adm_destroy(NULL)` as a no-op.
+- Implement `qhw_adm_get_threading()`.
+- Add internal helpers for locking, unlocking, metadata copying, metadata
+  cleanup, and structure-size validation.
+- Implement context-local diagnostic handling.
+- Store a stable diagnostic string that remains valid until the next call that
+  updates the context error state or destroys the context.
+- Implement the view-lifetime rule for output pointer fields and document that
+  SWIG wrappers deep-copy pointer-backed fields.
+- Implement the temporary deep-copy rule for capacity-provider snapshot
+  metadata.
+- Clear the diagnostic string after successful calls.
+- Return `QHW_ADM_ERR_INVAL`, `QHW_ADM_ERR_NOMEM`,
+  `QHW_ADM_ERR_UNSUPPORTED`, and `QHW_ADM_ERR_STATE` from the skeleton paths
+  where those errors can already be detected.
+- Add a Python `AdmissionContext` wrapper for context creation, destruction,
+  threading query, and last-error access.
+- Add C tests for default context creation, explicit threading mode, invalid
+  attributes, invalid output pointers, metadata copy ownership, destroy cleanup,
+  `qhw_adm_destroy(NULL)`, `qhw_adm_get_threading()`, and `qhw_adm_last_error()`.
+- Add Python tests for wrapper construction, explicit threading mode,
+  invalid constructor input, last-error access, and deterministic cleanup.
+- Validate the phase with a C executable and a Python test that can create an
+  admission context, query its threading mode, read diagnostics, and destroy it.
 
 ### Phase 2: Baseline Estimator
 
-- Implement baseline estimator plugin.
+- Implement baseline estimator plugin and keep it loadable through the
+  estimator plugin interface.
 - Implement estimator plugin loading and descriptor validation.
-- Support configurable baseline circuit shape.
-- Support one-qubit and two-qubit gate counts.
+- Add runtime APIs that register and update device profiles.
+- Add runtime APIs that configure the baseline circuit shape used for credit
+  and rate accounting.
+- Add `qhw_adm_load_config()` and `qhw_adm_load_config_string()`.
+- Add YAML loading for device profiles, baseline circuit shapes, timing
+  fields, policy selection, estimator selection, options, and plugin search
+  paths.
+- Extend SWIG and the Python wrapper for device profiles, baseline circuit
+  objects, estimator loading, estimator selection, YAML loading, and direct
+  runtime profile updates.
+- Define configuration precedence. Runtime API updates override YAML-loaded
+  defaults. Estimator call options override the registered defaults for that
+  evaluation.
+- Support one-qubit gate time, two-qubit gate time, measurement time,
+  transfer time, compile time, control overhead, shot count, and maximum shot
+  limits.
+- Store the generic timing inputs as fixed fields in
+  `qhw_adm_device_profile_t`, with metadata used for extensions and overrides.
+- Support baseline circuit fields for qubit count, depth, one-qubit gate
+  count, two-qubit gate count, measurement count, and shots.
+- Start with an IQM-oriented device profile for the ORNL system. The profile
+  should be generated from characterized device data rather than hardcoded in
+  the estimator.
+- Use characterized device outputs as the data source for the IQM profile.
+  A qhw-characterization run can provide normalized backend information,
+  coupling graph, calibration summary, timing data, gate quality, readout
+  quality, and measurement behavior.
+- Preserve the basic estimator shape from the simulator model. The estimator
+  converts qtask metadata into execution time by combining one-qubit gate
+  cost, two-qubit gate cost, measurement cost, shot count, transfer overhead,
+  compile overhead, and control overhead.
+- Convert estimated execution time into baseline units by comparing the qtask
+  estimate with the configured baseline circuit estimate.
 - Add overflow-safe arithmetic helpers.
+- Add validation for incomplete profiles and invalid baseline shapes.
+- Add C tests for YAML parsing, runtime profile overrides, and configuration
+  precedence.
+- Add C tests that reject missing configuration mode flags and reject calls
+  that set both `QHW_ADM_CONFIG_MERGE` and `QHW_ADM_CONFIG_REPLACE`.
+- Add C tests that reject unknown configuration flag bits.
+- Add C tests for atomic configuration loading and failed-load rollback.
 - Add C tests for timing and baseline-unit calculations.
 - Add C tests for external estimator loading.
+- Add C tests for estimator descriptor validation, including
+  `QHW_ADM_EST_CAP_FEEDBACK` requiring the `record_actual` callback.
+- Add C tests for estimator feedback idempotency expectations using a mock
+  feedback-capable estimator.
+- Add Python tests for profile registration, YAML loading, baseline override,
+  estimator loading, estimator selection, and baseline estimate inspection.
+- Validate the phase with C and Python tests that load a profile, select the
+  baseline estimator, estimate a qtask class, and report baseline units.
 
-### Phase 3: Unlimited Policy
+### Phase 3: Policy Framework And Reservation Core
 
-- Implement `unlimited` policy plugin.
-- Add evaluate and reserve paths.
-- Add reservation table insertion and release.
-- Add C and Python tests.
+- Implement policy plugin loading, descriptor lookup, and descriptor
+  validation for `qhw_adm_policy_desc_t`.
+- Validate policy descriptor size, ABI version, policy name, required
+  callbacks, and declared capabilities before registering a plugin.
+- Add the policy registry and search-path handling used by
+  `qhw_adm_load_policy()`, `qhw_adm_add_policy_path()`, and
+  `qhw_adm_set_policy()`.
+- Store one selected policy instance per registered device.
+- Copy policy options into policy-owned or context-owned storage with clear
+  cleanup ownership.
+- Initialize and destroy policy-private state through the plugin callbacks.
+- Add common decision helpers for accepted, delayed, rejected, unsupported,
+  and policy-error decisions.
+- Add common reason-code and diagnostic handling so policy plugins do not
+  build ad hoc decision payloads.
+- Deep-copy policy-produced decision, grant, and capacity-view pointer fields
+  before returning data to public callers or storing it in reservations.
+- Implement the common `evaluate()` pipeline. The core validates the request,
+  selects the target device, runs the estimator, obtains capacity state, calls
+  the selected policy, and returns a structured decision.
+- Validate quantum-budget arithmetic with overflow-safe addition and checked
+  subtraction before policy evaluation.
+- Implement the common `reserve()` pipeline. The core performs the same
+  validation and estimation path as `evaluate()`, calls the selected policy, and
+  publishes a reservation only after the pending record and core ledger commit
+  succeed.
+- Implement the core capacity ledger as the source of truth for committed
+  credits, rate units, reservations, and scopes.
+- Implement `qhw_adm_capacity_view_t` construction from the registered device
+  profile, capacity-provider snapshot, and core capacity ledger.
+- Derive concrete `total_rate` during capacity-view construction when the
+  registered profile has `device_rate == 0`.
+- Pass `qhw_adm_capacity_view_t` to policy `evaluate()` and `reserve()`
+  callbacks.
+- Return `qhw_adm_capacity_view_t` from `qhw_adm_get_capacity()`.
+- Track active scoped reservations so external scope caps are enforced as
+  `external_limit - scoped_reserved`.
+- Treat capacity-provider snapshots as read-only projection input and optional
+  scope caps.
+- Add context-clock helpers used when reservation creation, expiration, or
+  usage accounting need a timestamp and the caller supplies zero.
+- Implement `qhw_adm_policy_grant_t` and the policy reserve-planning
+  contract.
+- Validate policy grants before committing capacity. Reject mismatched
+  device/scope grants, grants that exceed the capacity view, and grants whose
+  baseline units conflict with the request estimate.
+- Implement reserve as a core transaction that creates a complete pending
+  reservation, commits the core ledger, publishes the reservation, and restores
+  the ledger if any pre-publication step fails.
+- Reject profile, policy, or estimator replacement while the target device has
+  active reservations.
+- Store device profile, policy, and estimator versions on each reservation and
+  validate those versions during lifecycle and usage-accounting paths.
+- Extend SWIG and the Python wrapper for policy loading, policy search paths,
+  policy selection, admission requests, qtask classes, decisions,
+  reservations, `evaluate()`, `reserve()`, and reservation lifecycle APIs.
+- Implement reservation record allocation, metadata copying, estimate copying,
+  state initialization, and publication into the reservation table.
+- Implement automatic nonzero reservation ID allocation when a request supplies
+  `reservation_id = 0`.
+- Store the accepted request's `quantum_budget_ns` in the reservation record.
+- Implement common reservation lookup by reservation ID.
+- Implement common reservation state transitions for release, cancellation,
+  renewal, and expiration.
+- Implement the reservation clock source, default TTL selection,
+  `expires_at_ns` calculation, terminal-state behavior, idempotent
+  release/cancel handling, and `renew(now_ns, ttl_ns)`.
+- Call the reservation's stored policy release callback during release,
+  cancellation, and expiration so policy-local statistics observe terminal
+  transitions.
+- Ensure failed reservation publication leaves the core capacity ledger
+  unchanged.
+- Add C tests using a mock policy plugin for plugin loading, malformed
+  descriptors, policy selection, evaluate without mutation, successful
+  reservation publication, ledger rollback, scoped capacity, external capacity
+  caps with existing scoped reservations, direct API and
+  `QHW_ADM_CONFIG_REPLACE` rejection while active reservations exist,
+  capacity-view construction, device-wide availability across multiple scopes,
+  scope-local cap application, automatic reservation ID generation, duplicate
+  caller reservation ID rejection, checked quantum-budget arithmetic, invalid
+  policy grant rejection, `qhw_adm_get_capacity()`, policy capacity callback
+  decoration, policy-output deep copy, version validation, release, cancel,
+  idempotent terminal operations, renew, expire with explicit time, expire
+  with context-clock time, lookup, and diagnostic reporting.
+- Add Python tests using a mock policy plugin for policy loading,
+  `evaluate()`, `reserve()`, reservation lookup, release, cancellation,
+  renewal, expiration, scoped capacity, lifecycle idempotency, and decision
+  conversion.
+- Validate the phase with C and Python tests that load an estimator and mock
+  policy, evaluate a request, reserve capacity, query the reservation, and
+  release it.
 
-### Phase 4: Credit Policy
+### Phase 4: Unlimited Policy
 
-- Implement finite credit budget.
-- Add release, cancellation, and expiration accounting.
-- Add optional task-level consume and return paths.
-- Add C and Python tests.
+- Implement `unlimited` as a policy plugin using the common policy framework.
+- Accept every valid request returned by the common validation and estimator
+  path.
+- Return delayed or rejected decisions only when common validation, device
+  state, estimator output, or policy framework checks require it.
+- Keep policy-private state limited to configuration and statistics.
+- Implement release, consume, return-usage, and capacity callbacks as no-op or
+  reporting callbacks where appropriate.
+- Add C tests for accepted evaluation, accepted reservation, release,
+  cancellation, expiration, capacity reporting, and invalid-request handling.
+- Add Python tests for `unlimited` policy loading, evaluation, reservation,
+  lifecycle operations, and capacity reporting.
+- Validate the phase with C and Python tests that use the real `unlimited`
+  plugin to admit and release a reservation.
 
-### Phase 5: Rate Policy
+### Phase 5: Credit Policy
 
-- Implement device-rate derivation.
-- Implement rate slices.
-- Add walltime feasibility checks.
-- Add C and Python tests.
+- Implement finite credit-budget configuration and validation.
+- Track total, reserved, consumed, returned, and available credits per device.
+- Convert request estimates into required credits through the configured
+  baseline-unit or timing rule.
+- Return accepted, delayed, or rejected decisions based on required credits,
+  available credits, device state, and policy limits.
+- Reserve credits atomically when `reserve()` succeeds.
+- Return credits on release, cancellation, and expiration through the common
+  reservation lifecycle path.
+- Implement policy hooks needed by the common usage-accounting APIs.
+- Add C tests for exact-fit admission, insufficient credits, oversized
+  requests, bounded overcommit, overcommit disabled behavior, overcommit limit
+  rejection, release return, cancellation return, expiration return, usage
+  consumption, returned usage, over-limit usage, and invalid configuration.
+- Add Python tests for credit configuration, accepted decisions, delayed
+  decisions, rejected decisions, release return, expiration return, and
+  over-limit reporting.
+- Validate the phase with C and Python tests that reserve finite credits,
+  reject an oversized request, release capacity, and admit a later request.
 
-### Phase 6: Python Package
+### Phase 6: Rate Policy
 
-- Add SWIG interface files.
-- Add Python wrapper classes.
+- Implement device-rate derivation from the configured baseline circuit and
+  accounting time span.
+- Validate rate policy options, including time span, device rate,
+  concurrent-job target, rate slice, reservation TTL, and walltime inputs.
+- Compute required rate from estimated baseline units and requested quantum
+  budget.
+- Allocate the smallest valid rate slice that satisfies the request and fits
+  available capacity.
+- Return accepted, delayed, or rejected decisions based on required rate,
+  available rate, slice size, device state, and walltime feasibility.
+- Track total, reserved, consumed, returned, and available rate units per
+  device.
+- Implement window-local rate consumption, accounting-window advancement, and
+  over-limit detection when `rate_consumed` exceeds `rate_reserved`.
+- Return rate capacity on release, cancellation, and expiration through the
+  common reservation lifecycle path.
+- Implement policy hooks needed by the common usage-accounting APIs.
+- Add C tests for rate derivation, exact-slice admission, multi-slice
+  admission, insufficient rate, oversized requests, walltime rejection,
+  reservation quantum-budget storage, release return, cancellation return,
+  expiration return, usage consumption, returned usage, and invalid
+  configuration.
+- Add Python tests for rate configuration, device-rate derivation, accepted
+  decisions, delayed decisions, rejected decisions, release return, and
+  walltime feasibility.
+- Validate the phase with C and Python tests that derive device rate from the
+  baseline profile, admit a valid request, delay a capacity-bound request, and
+  reject an impossible request.
+
+### Phase 7: Controller-Driven Usage Accounting
+
+- Implement `qhw_adm_usage_t`, `qhw_adm_usage_state_t`,
+  `qhw_adm_compliance_t`, and `qhw_adm_actual_usage_t`.
+- Extend SWIG and the Python wrapper for usage records, usage state,
+  compliance records, actual-usage records, and usage-accounting APIs.
+- Implement `qhw_adm_authorize_usage()` as a dry-run usage check.
+- Implement `qhw_adm_consume()` for controller-driven pre-submit charging
+  after scheduler selection and before device submission.
+- Use `qhw_adm_usage_t.event_time_ns` for rate-window selection. When it is
+  zero, use the context clock before policy evaluation or accounting updates.
+- Implement `qhw_adm_return_usage()` for cancellation, failed execution,
+  partial execution, and shot-sliced work that returns unused capacity.
+- Implement `qhw_adm_record_actual()` so measured qtask timing can update
+  estimator feedback without changing scheduler ordering.
+- Invoke the selected estimator's `record_actual` callback when it advertises
+  `QHW_ADM_EST_CAP_FEEDBACK`.
+- Implement `qhw_adm_get_usage()` and `qhw_adm_get_compliance()`.
+- Track usage-event idempotency for nonzero `(reservation_id, task_id)` pairs.
+- Implement canonical usage equality for idempotency, including metadata
+  sorting, duplicate-key rejection, and typed value comparison.
+- Update reservation accounting fields when usage is consumed, returned,
+  over limit, or left unused at release.
+- Return policy actions through decision or compliance records. The controller
+  applies those actions to reservations, future qtasks, scheduler priority, or
+  resource-manager notifications.
+- Ensure future `evaluate()` and `reserve()` calls use the updated reservation
+  and usage state.
+- Add C tests for pre-scheduler authorization, pre-submit consumption,
+  over-limit rejection before scheduling, returned usage, actual-usage
+  feedback after completion, estimator feedback callback invocation,
+  estimator feedback failure after telemetry commit,
+  estimator feedback retry after callback failure, explicit event timestamps,
+  context-clock event timestamps, rate-window advancement,
+  idempotent consume, idempotent return, idempotent actual recording,
+  metadata-order-insensitive usage equality, conflicting retry rejection,
+  payload reservation ID mismatch rejection, return for unconsumed task
+  rejection, excessive return rejection, anonymous `task_id = 0` events,
+  unused-capacity reporting, and future reservation decisions after usage
+  updates.
+- Add Python tests for usage authorization before scheduling, pre-submit
+  consumption, returned usage, actual-usage feedback, compliance reporting, and
+  future reservation decisions after usage updates.
+- Validate the phase with C and Python tests that reserve capacity, authorize a
+  qtask, consume the estimated usage before device submission, record actual
+  completion usage, and use the updated state during a later admission
+  decision.
+
+### Phase 8: Python Packaging And Binding Completion
+
+- Audit the SWIG interface for every public C API and public structure added
+  in earlier phases.
+- Add any missing typemaps for output structures, arrays, strings, plugin
+  handles, and ownership-transfer cases.
+- Audit Python wrapper classes for context, device profile, baseline circuit,
+  qtask class, request, decision, reservation, usage, policy, and estimator
+  objects.
 - Add editable install support through `pyproject.toml`.
-- Add Python tests for all public wrapper flows.
+- Add installed-package tests that import the package from an installed wheel
+  and exercise each public wrapper flow.
+- Add Python integration tests that run all standard policies through the same
+  wrapper-level request and reservation path.
+- Validate the phase with CTest running both C tests and installed-package
+  Python tests.
 
-### Phase 7: Documentation
+### Phase 9: Documentation
 
 - Add `README.md` with build, install, and test commands.
 - Add `docs/qhw-admission-standard.md`.
@@ -1595,9 +2551,5 @@ Python tests should cover:
 
 ## Open Design Questions
 
-- Should task-level consumption be required for credit policy only, or should
-  every policy expose a common usage-accounting path?
-- Should reservations be strict leases with explicit renewal, or should callers
-  choose that behavior through policy options?
 - Should persistence be part of the core library or provided by a caller-owned
   snapshot/restore layer?
