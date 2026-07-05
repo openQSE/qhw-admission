@@ -2,6 +2,7 @@ import os
 import unittest
 
 from qhw_admission import (
+    AdmissionError,
     AdmissionContext,
     AdmissionRequest,
     Baseline,
@@ -200,6 +201,39 @@ devices:
             self.assertEqual(decision.decision, DECISION_ACCEPTED)
             self.assertEqual(decision.rate_required, 2)
             self.assertEqual(decision.capacity_granted, 2)
+
+    def test_yaml_rejects_rate_slice_above_derived_rate(self):
+        policy_dir = os.environ["QHW_ADM_TEST_RATE_DIR"]
+        config = f"""
+plugin_paths:
+  policies: ["{policy_dir}"]
+devices:
+  - device_id: 7
+    max_qubits: 20
+    time_span_ns: 1
+    baseline:
+      qubit_count: 4
+      depth: 10
+      one_q_gate_count: 10
+      two_q_gate_count: 5
+      measurement_count: 2
+      shots: 100
+    timing:
+      one_q_gate_ns: 20
+      two_q_gate_ns: 100
+      measurement_ns: 1000
+    rate:
+      device_rate: 0
+      concurrent_jobs: 1
+    policy:
+      name: rate
+      options:
+        rate_slice: 2
+"""
+
+        with AdmissionContext() as ctx:
+            with self.assertRaises(AdmissionError):
+                ctx.load_config_string(config)
 
 
 if __name__ == "__main__":

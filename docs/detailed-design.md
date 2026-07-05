@@ -1388,6 +1388,8 @@ The C option key for an explicit slice is `QHW_ADM_OPT_RATE_SLICE`. The YAML
 key is `policy.options.rate_slice`. The C option key for the policy TTL is
 `QHW_ADM_OPT_RATE_RESERVATION_TTL_NS`. The YAML key is
 `policy.options.rate_reservation_ttl_ns`.
+An explicit `rate_slice` must be less than or equal to the explicit or derived
+`total_rate` for the device.
 
 `rate_slice` defaults to:
 

@@ -379,6 +379,31 @@ static int test_invalid_configuration(void)
 	qhw_adm_t *ctx = NULL;
 	qhw_adm_device_profile_t profile;
 	qhw_adm_kv_t option;
+	const char *yaml =
+		"plugin_paths:\n"
+		"  policies: [\"" QHW_ADM_TEST_RATE_DIR "\"]\n"
+		"devices:\n"
+		"  - device_id: 7\n"
+		"    max_qubits: 20\n"
+		"    time_span_ns: 1\n"
+		"    baseline:\n"
+		"      qubit_count: 4\n"
+		"      depth: 10\n"
+		"      one_q_gate_count: 10\n"
+		"      two_q_gate_count: 5\n"
+		"      shots: 100\n"
+		"      measurement_count: 2\n"
+		"    timing:\n"
+		"      one_q_gate_ns: 20\n"
+		"      two_q_gate_ns: 100\n"
+		"      measurement_ns: 1000\n"
+		"    rate:\n"
+		"      device_rate: 0\n"
+		"      concurrent_jobs: 1\n"
+		"    policy:\n"
+		"      name: rate\n"
+		"      options:\n"
+		"        rate_slice: 2\n";
 
 	profile = make_profile(4, 2, 0);
 	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
@@ -401,6 +426,22 @@ static int test_invalid_configuration(void)
 		QHW_ADM_OK);
 	CHECK(qhw_adm_set_policy(ctx, profile.device_id, "rate",
 		&option, 1) == QHW_ADM_ERR_INVAL);
+	qhw_adm_destroy(ctx);
+
+	profile = make_profile(0, 1, 1);
+	ctx = NULL;
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_register_device(ctx, &profile) == QHW_ADM_OK);
+	CHECK(qhw_adm_add_policy_path(ctx, QHW_ADM_TEST_RATE_DIR) ==
+		QHW_ADM_OK);
+	CHECK(qhw_adm_set_policy(ctx, profile.device_id, "rate",
+		&option, 1) == QHW_ADM_ERR_INVAL);
+	qhw_adm_destroy(ctx);
+
+	ctx = NULL;
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_load_config_string(ctx, yaml, 0,
+		QHW_ADM_CONFIG_MERGE) == QHW_ADM_ERR_INVAL);
 	qhw_adm_destroy(ctx);
 	return 0;
 }

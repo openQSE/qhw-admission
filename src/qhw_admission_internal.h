@@ -191,6 +191,10 @@ qhw_adm_rc_t qhw_adm_find_or_load_policy(
 	qhw_adm_policy_t **out_policy,
 	int *out_loaded);
 
+qhw_adm_rc_t qhw_adm_derive_total_rate(
+	struct qhw_adm_device_entry *entry,
+	uint64_t *out_rate);
+
 qhw_adm_rc_t qhw_adm_set_device_policy_entry(
 	struct qhw_adm_device_entry *entry,
 	const qhw_adm_policy_t *policy,

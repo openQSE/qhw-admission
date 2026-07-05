@@ -305,6 +305,65 @@ void qhw_adm_remove_policy_entry(qhw_adm_t *ctx, qhw_adm_policy_t *entry)
 	}
 }
 
+static qhw_adm_rc_t qhw_adm_find_rate_slice_option(
+	const qhw_adm_kv_t *options,
+	size_t option_count,
+	uint64_t *out_rate_slice)
+{
+	size_t i;
+
+	if (out_rate_slice == NULL ||
+	    (option_count > 0 && options == NULL)) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	*out_rate_slice = 0;
+	for (i = 0; i < option_count; i++) {
+		if (options[i].key != QHW_ADM_OPT_RATE_SLICE) {
+			continue;
+		}
+		if (options[i].value.type != QHW_ADM_VALUE_U64) {
+			return QHW_ADM_ERR_INVAL;
+		}
+		*out_rate_slice = options[i].value.value.u64;
+	}
+
+	return QHW_ADM_OK;
+}
+
+static qhw_adm_rc_t qhw_adm_validate_rate_policy_options(
+	struct qhw_adm_device_entry *entry,
+	const qhw_adm_policy_t *policy,
+	const qhw_adm_kv_t *options,
+	size_t option_count)
+{
+	uint64_t rate_slice;
+	uint64_t total_rate;
+	qhw_adm_rc_t rc;
+
+	if (strcmp(policy->desc->name, "rate") != 0) {
+		return QHW_ADM_OK;
+	}
+
+	rc = qhw_adm_find_rate_slice_option(
+		options,
+		option_count,
+		&rate_slice);
+	if (rc != QHW_ADM_OK || rate_slice == 0) {
+		return rc;
+	}
+
+	rc = qhw_adm_derive_total_rate(entry, &total_rate);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
+	if (rate_slice > total_rate) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	return QHW_ADM_OK;
+}
+
 qhw_adm_rc_t qhw_adm_set_device_policy_entry(
 	struct qhw_adm_device_entry *entry,
 	const qhw_adm_policy_t *policy,
@@ -316,6 +375,15 @@ qhw_adm_rc_t qhw_adm_set_device_policy_entry(
 
 	if (entry == NULL || policy == NULL) {
 		return QHW_ADM_ERR_INVAL;
+	}
+
+	rc = qhw_adm_validate_rate_policy_options(
+		entry,
+		policy,
+		options,
+		option_count);
+	if (rc != QHW_ADM_OK) {
+		return rc;
 	}
 
 	if (policy->desc->init != NULL) {

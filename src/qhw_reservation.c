@@ -350,13 +350,16 @@ static qhw_adm_rc_t derive_total_credits(
 	return QHW_ADM_OK;
 }
 
-static qhw_adm_rc_t derive_total_rate(
+qhw_adm_rc_t qhw_adm_derive_total_rate(
 	struct qhw_adm_device_entry *entry,
 	uint64_t *out_rate)
 {
 	qhw_adm_estimate_t estimate;
 	qhw_adm_rc_t rc;
 
+	if (entry == NULL || out_rate == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
 	if (entry->profile.device_rate != 0) {
 		*out_rate = entry->profile.device_rate;
 		return QHW_ADM_OK;
@@ -364,6 +367,10 @@ static qhw_adm_rc_t derive_total_rate(
 	if (entry->profile.time_span_ns == 0) {
 		*out_rate = 0;
 		return QHW_ADM_OK;
+	}
+	if (entry->estimator == NULL ||
+	    entry->estimator->estimate_baseline == NULL) {
+		return QHW_ADM_ERR_ESTIMATOR;
 	}
 
 	memset(&estimate, 0, sizeof(estimate));
@@ -447,7 +454,7 @@ static qhw_adm_rc_t build_capacity_view(
 		return rc;
 	}
 
-	rc = derive_total_rate(entry, &view.total_rate);
+	rc = qhw_adm_derive_total_rate(entry, &view.total_rate);
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
