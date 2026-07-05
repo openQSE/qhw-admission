@@ -6,8 +6,10 @@ include(GNUInstallDirs)
 
 option(QHW_ADM_BUILD_SHARED "Build shared qhw-admission library" ON)
 option(QHW_ADM_BUILD_TESTS "Build qhw-admission tests" ON)
+option(QHW_ADM_BUILD_PLUGINS "Build standard qhw-admission policy plugins" ON)
 option(QHW_ADM_BUILD_PYTHON "Build Python bindings" ON)
 option(QHW_ADM_BUILD_SWIG "Build SWIG Python extension" ON)
+option(QHW_ADM_INSTALL_PLUGINS "Install standard policy plugins" ON)
 option(QHW_ADM_INSTALL_PYTHON_ARTIFACTS
     "Install native artifacts into the Python package"
     OFF)
@@ -89,6 +91,20 @@ set(QHW_ADM_PUBLIC_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/qhw_admission/qhw_admission_abi.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/qhw_admission/qhw_admission_types.h)
 
+if(QHW_ADM_BUILD_PLUGINS)
+    add_library(qhw_adm_unlimited MODULE src/policies/unlimited.c)
+    target_include_directories(qhw_adm_unlimited
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_unlimited PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_unlimited PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/policies)
+endif()
+
 if(QHW_ADM_BUILD_TESTS)
     enable_testing()
 
@@ -128,6 +144,20 @@ if(QHW_ADM_BUILD_TESTS)
         "QHW_ADM_TEST_BAD_GRANT_DIR=\"$<TARGET_FILE_DIR:qhw_adm_bad_grant>\""
         "QHW_ADM_TEST_ERROR_OUTPUT_DIR=\"$<TARGET_FILE_DIR:qhw_adm_error_output>\"")
     add_test(NAME test_policy COMMAND test_policy)
+
+    if(QHW_ADM_BUILD_PLUGINS)
+        add_executable(test_unlimited tests/c/test_unlimited.c)
+        target_include_directories(test_unlimited
+            PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(test_unlimited PRIVATE
+            qhw_admission
+            qhw_datastructures)
+        target_compile_definitions(test_unlimited PRIVATE
+            "QHW_ADM_TEST_UNLIMITED_DIR=\"$<TARGET_FILE_DIR:qhw_adm_unlimited>\"")
+        add_dependencies(test_unlimited qhw_adm_unlimited)
+        add_test(NAME test_unlimited COMMAND test_unlimited)
+    endif()
 
     add_library(qhw_adm_estimator_mock MODULE
         tests/plugins/qhw_adm_estimator_mock.c)
@@ -211,6 +241,12 @@ install(
 install(
     DIRECTORY include/qhw_admission
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+if(QHW_ADM_BUILD_PLUGINS AND QHW_ADM_INSTALL_PLUGINS)
+    install(
+        TARGETS qhw_adm_unlimited
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/qhw_admission/policies)
+endif()
 
 install(
     EXPORT qhw_admissionTargets
@@ -341,4 +377,15 @@ if(QHW_ADM_BUILD_PYTHON AND QHW_ADM_BUILD_TESTS)
             ${Python3_EXECUTABLE}
             -S
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_policy.py)
+    if(QHW_ADM_BUILD_PLUGINS)
+        add_test(
+            NAME test_python_unlimited
+            COMMAND
+                ${CMAKE_COMMAND} -E env
+                PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python
+                QHW_ADM_TEST_UNLIMITED_DIR=${CMAKE_CURRENT_BINARY_DIR}/policies
+                ${Python3_EXECUTABLE}
+                -S
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_unlimited.py)
+    endif()
 endif()
