@@ -3,8 +3,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MOCK_REJECT_REQUEST_ID 43
+
 struct mock_policy_state {
 	uint64_t release_count;
+};
+
+static const qhw_adm_kv_t mock_decision_metadata[] = {
+	{
+		.key = 1001,
+		.value = {
+			.type = QHW_ADM_VALUE_STRING,
+			.value.string = "decision-metadata",
+		},
+	},
+};
+
+static const qhw_adm_kv_t mock_grant_metadata[] = {
+	{
+		.key = 1002,
+		.value = {
+			.type = QHW_ADM_VALUE_STRING,
+			.value.string = "grant-metadata",
+		},
+	},
+};
+
+static const qhw_adm_kv_t mock_capacity_metadata[] = {
+	{
+		.key = 1003,
+		.value = {
+			.type = QHW_ADM_VALUE_STRING,
+			.value.string = "capacity-metadata",
+		},
+	},
 };
 
 static qhw_adm_rc_t mock_init(
@@ -58,6 +90,9 @@ static void fill_accepted(
 	out_decision->capacity_granted = estimate->baseline_units;
 	out_decision->compliance_action = QHW_ADM_COMPLIANCE_ALLOW;
 	out_decision->confidence_ppm = estimate->confidence_ppm;
+	out_decision->message = "mock accepted";
+	out_decision->metadata = mock_decision_metadata;
+	out_decision->metadata_count = 1;
 }
 
 static qhw_adm_rc_t mock_evaluate(
@@ -102,6 +137,20 @@ static qhw_adm_rc_t mock_reserve(
 
 	memset(out_grant, 0, sizeof(*out_grant));
 	out_grant->struct_size = sizeof(*out_grant);
+	if (request->request_id == MOCK_REJECT_REQUEST_ID) {
+		size_t struct_size = out_decision->struct_size;
+
+		memset(out_decision, 0, sizeof(*out_decision));
+		out_decision->struct_size = struct_size;
+		out_decision->decision = QHW_ADM_DECISION_REJECTED;
+		out_decision->reason_code = QHW_ADM_REASON_SCOPE_LIMIT;
+		out_decision->compliance_action = QHW_ADM_COMPLIANCE_REJECT;
+		out_decision->message = "mock rejected";
+		out_decision->metadata = mock_decision_metadata;
+		out_decision->metadata_count = 1;
+		return QHW_ADM_OK;
+	}
+
 	out_grant->device_id = request->device_id;
 	out_grant->scope_id = request->scope_id;
 	out_grant->credits_granted = estimate->baseline_units;
@@ -109,6 +158,8 @@ static qhw_adm_rc_t mock_reserve(
 	out_grant->baseline_units_granted = estimate->baseline_units;
 	out_grant->reason_code = QHW_ADM_REASON_ACCEPTED;
 	out_grant->compliance_action = QHW_ADM_COMPLIANCE_ALLOW;
+	out_grant->metadata = mock_grant_metadata;
+	out_grant->metadata_count = 1;
 
 	fill_accepted(request, estimate, capacity, out_decision);
 	return QHW_ADM_OK;
@@ -146,6 +197,8 @@ static qhw_adm_rc_t mock_capacity(
 
 	*out_capacity = *core_view;
 	out_capacity->scheduler_policy_id = 1234;
+	out_capacity->metadata = mock_capacity_metadata;
+	out_capacity->metadata_count = 1;
 	return QHW_ADM_OK;
 }
 

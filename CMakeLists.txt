@@ -122,7 +122,11 @@ if(QHW_ADM_BUILD_TESTS)
         qhw_datastructures)
     target_compile_definitions(test_policy PRIVATE
         "QHW_ADM_TEST_POLICY_PATH=\"$<TARGET_FILE:qhw_adm_mock>\""
-        "QHW_ADM_TEST_POLICY_DIR=\"$<TARGET_FILE_DIR:qhw_adm_mock>\"")
+        "QHW_ADM_TEST_POLICY_DIR=\"$<TARGET_FILE_DIR:qhw_adm_mock>\""
+        "QHW_ADM_TEST_PLUGIN_DIR=\"$<TARGET_FILE_DIR:qhw_adm_estimator_mock>\""
+        "QHW_ADM_TEST_BAD_CAPS_PATH=\"$<TARGET_FILE:qhw_adm_bad_caps>\""
+        "QHW_ADM_TEST_BAD_GRANT_DIR=\"$<TARGET_FILE_DIR:qhw_adm_bad_grant>\""
+        "QHW_ADM_TEST_ERROR_OUTPUT_DIR=\"$<TARGET_FILE_DIR:qhw_adm_error_output>\"")
     add_test(NAME test_policy COMMAND test_policy)
 
     add_library(qhw_adm_estimator_mock MODULE
@@ -152,7 +156,49 @@ if(QHW_ADM_BUILD_TESTS)
         PREFIX ""
         LIBRARY_OUTPUT_DIRECTORY
             ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
-    add_dependencies(test_policy qhw_adm_mock)
+    add_library(qhw_adm_bad_caps MODULE tests/plugins/qhw_adm_bad_caps.c)
+    target_include_directories(qhw_adm_bad_caps
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_bad_caps PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_bad_caps PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+
+    add_library(qhw_adm_bad_grant MODULE tests/plugins/qhw_adm_bad_grant.c)
+    target_include_directories(qhw_adm_bad_grant
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_bad_grant PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_bad_grant PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+    add_library(qhw_adm_error_output MODULE
+        tests/plugins/qhw_adm_error_output.c)
+    target_include_directories(qhw_adm_error_output
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(qhw_adm_error_output PRIVATE
+        -Wall
+        -Wextra
+        -Werror)
+    set_target_properties(qhw_adm_error_output PROPERTIES
+        PREFIX ""
+        LIBRARY_OUTPUT_DIRECTORY
+            ${CMAKE_CURRENT_BINARY_DIR}/test-plugins)
+    add_dependencies(test_policy
+        qhw_adm_mock
+        qhw_adm_bad_caps
+        qhw_adm_bad_grant
+        qhw_adm_error_output)
 endif()
 
 install(

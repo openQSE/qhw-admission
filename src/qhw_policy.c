@@ -26,12 +26,33 @@ void qhw_adm_free_policy_entry(void *value, void *user_data)
 qhw_adm_rc_t qhw_adm_validate_policy_desc(
 	const qhw_adm_policy_desc_t *desc)
 {
+	uint64_t known_caps;
+
 	if (desc == NULL ||
 	    desc->struct_size < sizeof(*desc) ||
 	    desc->abi_version != QHW_ADM_ABI_VERSION ||
 	    desc->name == NULL ||
 	    desc->evaluate == NULL ||
 	    desc->reserve == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	known_caps = QHW_ADM_POLICY_CAP_USAGE_ACCOUNTING |
+		QHW_ADM_POLICY_CAP_CAPACITY_REPORT |
+		QHW_ADM_POLICY_CAP_SCOPED_CAPACITY;
+	if ((desc->capabilities & ~known_caps) != 0) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((desc->capabilities & QHW_ADM_POLICY_CAP_USAGE_ACCOUNTING) != 0 &&
+	    (desc->consume == NULL || desc->return_usage == NULL)) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((desc->capabilities & QHW_ADM_POLICY_CAP_CAPACITY_REPORT) != 0 &&
+	    desc->capacity == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((desc->capabilities & QHW_ADM_POLICY_CAP_SCOPED_CAPACITY) != 0 &&
+	    desc->capacity == NULL) {
 		return QHW_ADM_ERR_INVAL;
 	}
 
@@ -334,6 +355,7 @@ qhw_adm_rc_t qhw_adm_load_policy(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	rc = qhw_adm_load_policy_unlocked(ctx, path, out_policy);
 	if (rc != QHW_ADM_OK) {
@@ -367,6 +389,7 @@ qhw_adm_rc_t qhw_adm_add_policy_path(qhw_adm_t *ctx, const char *path)
 		free(copy);
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	if (ctx->policy_path_count >= SIZE_MAX / sizeof(*paths)) {
 		free(copy);
@@ -411,6 +434,7 @@ qhw_adm_rc_t qhw_adm_set_policy(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	entry = qhw_hash_table_find(&ctx->devices, device_id);
 	if (entry == NULL) {

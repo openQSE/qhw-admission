@@ -109,6 +109,104 @@ void qhw_adm_free_metadata_count(qhw_adm_kv_t *metadata, size_t count)
 	free(metadata);
 }
 
+void qhw_adm_clear_output(qhw_adm_t *ctx)
+{
+	struct qhw_list_node *node;
+
+	if (ctx == NULL) {
+		return;
+	}
+
+	while ((node = qhw_list_pop_front(&ctx->output_views)) != NULL) {
+		struct qhw_adm_output_entry *entry;
+
+		entry = qhw_container_of(
+			node,
+			struct qhw_adm_output_entry,
+			node);
+		qhw_adm_free_metadata_count(
+			entry->metadata,
+			entry->metadata_count);
+		free(entry->message);
+		free(entry);
+	}
+}
+
+qhw_adm_rc_t qhw_adm_copy_output_metadata(
+	qhw_adm_t *ctx,
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	const qhw_adm_kv_t **out_metadata,
+	size_t *out_metadata_count)
+{
+	struct qhw_adm_output_entry *entry;
+	qhw_adm_kv_t *copy = NULL;
+	qhw_adm_rc_t rc;
+
+	if (ctx == NULL || out_metadata == NULL ||
+	    out_metadata_count == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	*out_metadata = NULL;
+	*out_metadata_count = 0;
+	if (metadata_count == 0) {
+		return QHW_ADM_OK;
+	}
+
+	entry = calloc(1, sizeof(*entry));
+	if (entry == NULL) {
+		return QHW_ADM_ERR_NOMEM;
+	}
+
+	rc = qhw_adm_copy_metadata(metadata, metadata_count, &copy);
+	if (rc != QHW_ADM_OK) {
+		free(entry);
+		return rc;
+	}
+
+	entry->metadata = copy;
+	entry->metadata_count = metadata_count;
+	qhw_list_push_back(&ctx->output_views, &entry->node);
+	*out_metadata = entry->metadata;
+	*out_metadata_count = entry->metadata_count;
+	return QHW_ADM_OK;
+}
+
+qhw_adm_rc_t qhw_adm_copy_output_message(
+	qhw_adm_t *ctx,
+	const char *message,
+	const char **out_message)
+{
+	struct qhw_adm_output_entry *entry;
+	char *copy = NULL;
+
+	if (ctx == NULL || out_message == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	*out_message = NULL;
+	if (message == NULL) {
+		return QHW_ADM_OK;
+	}
+
+	copy = qhw_adm_strdup(message);
+	if (copy == NULL) {
+		return QHW_ADM_ERR_NOMEM;
+	}
+
+	entry = calloc(1, sizeof(*entry));
+	if (entry == NULL) {
+		free(copy);
+		return QHW_ADM_ERR_NOMEM;
+	}
+
+	entry->message = copy;
+	qhw_list_push_back(&ctx->output_views, &entry->node);
+	*out_message = entry->message;
+	return QHW_ADM_OK;
+}
+
 qhw_adm_rc_t qhw_adm_metadata_get_u64(
 	const qhw_adm_kv_t *metadata,
 	size_t count,

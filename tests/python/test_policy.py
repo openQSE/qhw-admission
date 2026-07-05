@@ -6,12 +6,14 @@ from qhw_admission import (
     AdmissionError,
     AdmissionRequest,
     Baseline,
+    COMPLIANCE_ALLOW,
     DECISION_ACCEPTED,
     DeviceProfile,
     QtaskClass,
     RESERVATION_ACTIVE,
     RESERVATION_EXPIRED,
     RESERVATION_RELEASED,
+    VALUE_STRING,
     WORKLOAD_HYBRID_JOB,
 )
 
@@ -92,19 +94,48 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(decision.estimated_total_ns, 683160)
             self.assertEqual(decision.capacity_granted, 3)
             self.assertEqual(decision.reservation_id, 0)
+            self.assertEqual(decision.compliance_action, COMPLIANCE_ALLOW)
+            self.assertEqual(decision.retry_after_ns, 0)
+            self.assertEqual(decision.message, "mock accepted")
+            self.assertEqual(
+                decision.metadata,
+                ((1001, VALUE_STRING, "decision-metadata"),),
+            )
 
             decision = ctx.reserve(request)
             self.assertEqual(decision.decision, DECISION_ACCEPTED)
             self.assertNotEqual(decision.reservation_id, 0)
+            self.assertEqual(decision.message, "mock accepted")
 
             reservation = ctx.get_reservation(decision.reservation_id)
             self.assertEqual(reservation.state, RESERVATION_ACTIVE)
             self.assertEqual(reservation.credits_reserved, 3)
+            self.assertEqual(reservation.credits_consumed, 0)
             self.assertEqual(reservation.rate_reserved, 3)
+            self.assertEqual(reservation.rate_consumed, 0)
+            self.assertEqual(reservation.actual_total_ns, 0)
+            self.assertEqual(reservation.unused_capacity, 0)
+            self.assertEqual(reservation.overuse_count, 0)
+            self.assertEqual(reservation.underuse_score, 0)
+            self.assertGreater(reservation.device_profile_version, 0)
+            self.assertGreater(reservation.policy_version, 0)
+            self.assertGreater(reservation.estimator_version, 0)
+            self.assertEqual(
+                reservation.metadata,
+                ((1002, VALUE_STRING, "grant-metadata"),),
+            )
 
             capacity = ctx.get_capacity(7, 3)
             self.assertEqual(capacity.credits_reserved, 3)
+            self.assertEqual(capacity.credits_consumed, 0)
+            self.assertEqual(capacity.credits_returned, 0)
+            self.assertEqual(capacity.scoped_reserved_credits, 3)
             self.assertEqual(capacity.scheduler_policy_id, 1234)
+            self.assertEqual(capacity.confidence_ppm, 1_000_000)
+            self.assertEqual(
+                capacity.metadata,
+                ((1003, VALUE_STRING, "capacity-metadata"),),
+            )
 
             with self.assertRaises(AdmissionError):
                 ctx.set_policy(7, "mock")

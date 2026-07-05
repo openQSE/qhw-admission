@@ -387,6 +387,15 @@ static qhw_adm_rc_t build_capacity_view(
 	view.confidence_ppm = snapshot.confidence_ppm;
 	view.metadata = snapshot.metadata;
 	view.metadata_count = snapshot.metadata_count;
+	rc = qhw_adm_copy_output_metadata(
+		ctx,
+		view.metadata,
+		view.metadata_count,
+		&view.metadata,
+		&view.metadata_count);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
 
 	rc = derive_total_rate(entry, &view.total_rate);
 	if (rc != QHW_ADM_OK) {
@@ -434,6 +443,57 @@ static void fill_rejected_decision(
 		decision->device_id = request->device_id;
 		decision->scope_id = request->scope_id;
 	}
+}
+
+static qhw_adm_rc_t copy_decision_outputs(
+	qhw_adm_t *ctx,
+	qhw_adm_decision_t *decision)
+{
+	const qhw_adm_kv_t *metadata = decision->metadata;
+	size_t metadata_count = decision->metadata_count;
+	const char *message = decision->message;
+	qhw_adm_rc_t rc;
+
+	rc = qhw_adm_copy_output_metadata(
+		ctx,
+		metadata,
+		metadata_count,
+		&decision->metadata,
+		&decision->metadata_count);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
+
+	return qhw_adm_copy_output_message(
+		ctx,
+		message,
+		&decision->message);
+}
+
+static void clear_decision_pointer_outputs(qhw_adm_decision_t *decision)
+{
+	if (decision == NULL) {
+		return;
+	}
+
+	decision->message = NULL;
+	decision->metadata = NULL;
+	decision->metadata_count = 0;
+}
+
+static qhw_adm_rc_t copy_capacity_outputs(
+	qhw_adm_t *ctx,
+	qhw_adm_capacity_view_t *capacity)
+{
+	const qhw_adm_kv_t *metadata = capacity->metadata;
+	size_t metadata_count = capacity->metadata_count;
+
+	return qhw_adm_copy_output_metadata(
+		ctx,
+		metadata,
+		metadata_count,
+		&capacity->metadata,
+		&capacity->metadata_count);
 }
 
 static qhw_adm_rc_t prepare_policy_call(
@@ -573,8 +633,14 @@ qhw_adm_rc_t qhw_adm_evaluate(
 				&estimate,
 				&capacity,
 				quantum_budget);
-			qhw_adm_clear_error(ctx);
+			rc = copy_decision_outputs(ctx, out_decision);
+			if (rc == QHW_ADM_OK) {
+				qhw_adm_clear_error(ctx);
+			} else {
+				qhw_adm_set_error(ctx, "failed to copy decision");
+			}
 		} else {
+			clear_decision_pointer_outputs(out_decision);
 			qhw_adm_set_error(ctx, "policy evaluation failed");
 		}
 	} else {
@@ -639,11 +705,14 @@ static qhw_adm_rc_t select_ttl(
 static qhw_adm_rc_t validate_policy_grant(
 	const qhw_adm_request_t *request,
 	const qhw_adm_capacity_view_t *capacity,
+	const qhw_adm_estimate_t *estimate,
 	const qhw_adm_policy_grant_t *grant)
 {
 	if (grant->struct_size < sizeof(*grant) ||
 	    grant->device_id != request->device_id ||
-	    grant->scope_id != request->scope_id) {
+	    grant->scope_id != request->scope_id ||
+	    grant->baseline_units_granted != estimate->baseline_units ||
+	    (grant->metadata_count > 0 && grant->metadata == NULL)) {
 		return QHW_ADM_ERR_POLICY;
 	}
 
@@ -684,8 +753,8 @@ static qhw_adm_rc_t create_reservation_entry(
 	}
 
 	rc = qhw_adm_copy_metadata(
-		request->metadata,
-		request->metadata_count,
+		grant->metadata,
+		grant->metadata_count,
 		&entry->metadata);
 	if (rc != QHW_ADM_OK) {
 		free(entry);
@@ -711,7 +780,7 @@ static qhw_adm_rc_t create_reservation_entry(
 	reservation->estimated_total_ns = estimate->total_ns;
 	reservation->created_at_ns = capacity->now_ns;
 	reservation->metadata = entry->metadata;
-	reservation->metadata_count = request->metadata_count;
+	reservation->metadata_count = grant->metadata_count;
 	entry->policy = device->policy;
 	entry->policy_state = device->policy_state;
 
@@ -758,6 +827,7 @@ qhw_adm_rc_t qhw_adm_reserve(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	rc = prepare_policy_call(
 		ctx,
@@ -799,20 +869,36 @@ qhw_adm_rc_t qhw_adm_reserve(
 		&capacity,
 		&grant,
 		out_decision);
-	if (rc != QHW_ADM_OK ||
-	    out_decision->decision != QHW_ADM_DECISION_ACCEPTED) {
+	if (rc != QHW_ADM_OK) {
 		decorate_decision(
 			out_decision,
 			request,
 			&estimate,
 			&capacity,
 			quantum_budget);
+		clear_decision_pointer_outputs(out_decision);
 		qhw_adm_set_error(ctx, "policy reservation failed");
 		qhw_adm_unlock(ctx);
 		return rc;
 	}
+	if (out_decision->decision != QHW_ADM_DECISION_ACCEPTED) {
+		decorate_decision(
+			out_decision,
+			request,
+			&estimate,
+			&capacity,
+			quantum_budget);
+		rc = copy_decision_outputs(ctx, out_decision);
+		if (rc == QHW_ADM_OK) {
+			qhw_adm_clear_error(ctx);
+		} else {
+			qhw_adm_set_error(ctx, "failed to copy decision");
+		}
+		qhw_adm_unlock(ctx);
+		return rc;
+	}
 
-	rc = validate_policy_grant(request, &capacity, &grant);
+	rc = validate_policy_grant(request, &capacity, &estimate, &grant);
 	if (rc != QHW_ADM_OK) {
 		fill_rejected_decision(
 			out_decision,
@@ -856,6 +942,14 @@ qhw_adm_rc_t qhw_adm_reserve(
 		&estimate,
 		&capacity,
 		quantum_budget);
+	rc = copy_decision_outputs(ctx, out_decision);
+	if (rc != QHW_ADM_OK) {
+		qhw_hash_table_remove(&ctx->reservations, reservation_id);
+		qhw_adm_free_reservation_entry(reservation, NULL);
+		qhw_adm_set_error(ctx, "failed to copy decision");
+		qhw_adm_unlock(ctx);
+		return rc;
+	}
 	qhw_adm_clear_error(ctx);
 	qhw_adm_unlock(ctx);
 	return QHW_ADM_OK;
@@ -907,6 +1001,12 @@ qhw_adm_rc_t qhw_adm_get_capacity(
 	}
 
 	*out_capacity = capacity;
+	rc = copy_capacity_outputs(ctx, out_capacity);
+	if (rc != QHW_ADM_OK) {
+		qhw_adm_set_error(ctx, "failed to copy capacity view");
+		qhw_adm_unlock(ctx);
+		return rc;
+	}
 	qhw_adm_clear_error(ctx);
 	qhw_adm_unlock(ctx);
 	return QHW_ADM_OK;
@@ -928,6 +1028,7 @@ qhw_adm_rc_t qhw_adm_set_capacity_provider(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	memset(&ctx->capacity_provider, 0, sizeof(ctx->capacity_provider));
 	if (provider != NULL) {
@@ -1024,6 +1125,7 @@ qhw_adm_rc_t qhw_adm_release(
 
 	rc = qhw_adm_lock(ctx);
 	if (rc == QHW_ADM_OK) {
+		qhw_adm_clear_output(ctx);
 		rc = transition_reservation(
 			ctx,
 			reservation_id,
@@ -1052,6 +1154,7 @@ qhw_adm_rc_t qhw_adm_cancel(
 
 	rc = qhw_adm_lock(ctx);
 	if (rc == QHW_ADM_OK) {
+		qhw_adm_clear_output(ctx);
 		rc = transition_reservation(
 			ctx,
 			reservation_id,
@@ -1084,6 +1187,7 @@ qhw_adm_rc_t qhw_adm_renew(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	entry = qhw_hash_table_find(&ctx->reservations, reservation_id);
 	if (entry == NULL) {
@@ -1126,6 +1230,7 @@ qhw_adm_rc_t qhw_adm_expire(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	if (now_ns == 0) {
 		now_ns = qhw_adm_now_ns();

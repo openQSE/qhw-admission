@@ -434,6 +434,7 @@ qhw_adm_rc_t qhw_adm_load_estimator(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	rc = qhw_adm_load_estimator_unlocked(ctx, path, out_estimator);
 	if (rc != QHW_ADM_OK) {
@@ -467,6 +468,7 @@ qhw_adm_rc_t qhw_adm_add_estimator_path(qhw_adm_t *ctx, const char *path)
 		free(copy);
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	if (ctx->estimator_path_count >= SIZE_MAX / sizeof(*paths)) {
 		free(copy);
@@ -527,6 +529,7 @@ qhw_adm_rc_t qhw_adm_set_estimator(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	entry = qhw_hash_table_find(&ctx->devices, device_id);
 	if (entry == NULL) {

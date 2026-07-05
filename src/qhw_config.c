@@ -11,14 +11,16 @@ enum qhw_adm_config_section {
 	QHW_ADM_CFG_NONE = 0,
 	QHW_ADM_CFG_PLUGIN_PATHS = 1,
 	QHW_ADM_CFG_PLUGIN_ESTIMATORS = 2,
-	QHW_ADM_CFG_DEVICES = 3,
-	QHW_ADM_CFG_BASELINE = 4,
-	QHW_ADM_CFG_TIMING = 5,
-	QHW_ADM_CFG_CREDIT = 6,
-	QHW_ADM_CFG_RATE = 7,
-	QHW_ADM_CFG_ESTIMATOR = 8,
-	QHW_ADM_CFG_POLICY = 9,
-	QHW_ADM_CFG_ESTIMATOR_OPTIONS = 10,
+	QHW_ADM_CFG_PLUGIN_POLICIES = 3,
+	QHW_ADM_CFG_DEVICES = 4,
+	QHW_ADM_CFG_BASELINE = 5,
+	QHW_ADM_CFG_TIMING = 6,
+	QHW_ADM_CFG_CREDIT = 7,
+	QHW_ADM_CFG_RATE = 8,
+	QHW_ADM_CFG_ESTIMATOR = 9,
+	QHW_ADM_CFG_POLICY = 10,
+	QHW_ADM_CFG_ESTIMATOR_OPTIONS = 11,
+	QHW_ADM_CFG_POLICY_OPTIONS = 12,
 };
 
 struct qhw_adm_config_device {
@@ -26,6 +28,9 @@ struct qhw_adm_config_device {
 	char *estimator_name;
 	qhw_adm_kv_t *estimator_options;
 	size_t estimator_option_count;
+	char *policy_name;
+	qhw_adm_kv_t *policy_options;
+	size_t policy_option_count;
 	int active;
 };
 
@@ -34,12 +39,20 @@ struct qhw_adm_pending_config {
 	size_t device_count;
 	char **estimator_paths;
 	size_t estimator_path_count;
+	char **policy_paths;
+	size_t policy_path_count;
 	struct qhw_list_node loaded_estimators;
+	struct qhw_list_node loaded_policies;
 };
 
 struct qhw_adm_loaded_estimator {
 	struct qhw_list_node node;
 	qhw_adm_estimator_t *estimator;
+};
+
+struct qhw_adm_loaded_policy {
+	struct qhw_list_node node;
+	qhw_adm_policy_t *policy;
 };
 
 static void *config_alloc(size_t size, void *user_data)
@@ -69,6 +82,10 @@ static void qhw_adm_pending_config_fini(
 		qhw_adm_free_metadata_count(
 			config->devices[i].estimator_options,
 			config->devices[i].estimator_option_count);
+		free(config->devices[i].policy_name);
+		qhw_adm_free_metadata_count(
+			config->devices[i].policy_options,
+			config->devices[i].policy_option_count);
 	}
 	free(config->devices);
 
@@ -87,6 +104,22 @@ static void qhw_adm_pending_config_fini(
 			node);
 		free(loaded);
 	}
+
+	for (i = 0; i < config->policy_path_count; i++) {
+		free(config->policy_paths[i]);
+	}
+	free(config->policy_paths);
+
+	while ((node = qhw_list_pop_front(&config->loaded_policies)) !=
+	       NULL) {
+		struct qhw_adm_loaded_policy *loaded;
+
+		loaded = qhw_container_of(
+			node,
+			struct qhw_adm_loaded_policy,
+			node);
+		free(loaded);
+	}
 	memset(config, 0, sizeof(*config));
 }
 
@@ -95,6 +128,7 @@ static void qhw_adm_pending_config_init(
 {
 	memset(config, 0, sizeof(*config));
 	qhw_list_init(&config->loaded_estimators);
+	qhw_list_init(&config->loaded_policies);
 }
 
 static char *trim(char *line)
@@ -180,35 +214,60 @@ static qhw_adm_rc_t parse_u32(const char *value, uint32_t *out)
 	return QHW_ADM_OK;
 }
 
-static qhw_adm_rc_t add_estimator_path(
-	struct qhw_adm_pending_config *config,
+static qhw_adm_rc_t add_path(
+	char ***path_array,
+	size_t *path_count,
 	const char *path)
 {
 	char **paths;
 	char *copy;
+
+	if (path_array == NULL || path_count == NULL || path == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
 
 	copy = qhw_adm_strdup(path);
 	if (copy == NULL) {
 		return QHW_ADM_ERR_NOMEM;
 	}
 
-	if (config->estimator_path_count >= SIZE_MAX / sizeof(*paths)) {
+	if (*path_count >= SIZE_MAX / sizeof(*paths)) {
 		free(copy);
 		return QHW_ADM_ERR_NOMEM;
 	}
 
 	paths = realloc(
-		config->estimator_paths,
-		(config->estimator_path_count + 1) * sizeof(*paths));
+		*path_array,
+		(*path_count + 1) * sizeof(*paths));
 	if (paths == NULL) {
 		free(copy);
 		return QHW_ADM_ERR_NOMEM;
 	}
 
-	config->estimator_paths = paths;
-	config->estimator_paths[config->estimator_path_count] = copy;
-	config->estimator_path_count++;
+	*path_array = paths;
+	(*path_array)[*path_count] = copy;
+	(*path_count)++;
 	return QHW_ADM_OK;
+}
+
+static qhw_adm_rc_t add_estimator_path(
+	struct qhw_adm_pending_config *config,
+	const char *path)
+{
+	return add_path(
+		&config->estimator_paths,
+		&config->estimator_path_count,
+		path);
+}
+
+static qhw_adm_rc_t add_policy_path(
+	struct qhw_adm_pending_config *config,
+	const char *path)
+{
+	return add_path(
+		&config->policy_paths,
+		&config->policy_path_count,
+		path);
 }
 
 static qhw_adm_rc_t add_device(
@@ -253,6 +312,22 @@ static qhw_adm_rc_t set_estimator_name(
 
 	free(device->estimator_name);
 	device->estimator_name = copy;
+	return QHW_ADM_OK;
+}
+
+static qhw_adm_rc_t set_policy_name(
+	struct qhw_adm_config_device *device,
+	const char *name)
+{
+	char *copy;
+
+	copy = qhw_adm_strdup(name);
+	if (copy == NULL) {
+		return QHW_ADM_ERR_NOMEM;
+	}
+
+	free(device->policy_name);
+	device->policy_name = copy;
 	return QHW_ADM_OK;
 }
 
@@ -475,8 +550,9 @@ static qhw_adm_rc_t parse_option_value(
 	return QHW_ADM_OK;
 }
 
-static qhw_adm_rc_t add_estimator_option(
-	struct qhw_adm_config_device *device,
+static qhw_adm_rc_t add_option(
+	qhw_adm_kv_t **option_array,
+	size_t *option_count,
 	const char *key,
 	const char *value)
 {
@@ -484,7 +560,10 @@ static qhw_adm_rc_t add_estimator_option(
 	qhw_adm_kv_t option;
 	qhw_adm_rc_t rc;
 
-	if (device->estimator_option_count >= SIZE_MAX / sizeof(*options)) {
+	if (option_array == NULL || option_count == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if (*option_count >= SIZE_MAX / sizeof(*options)) {
 		return QHW_ADM_ERR_NOMEM;
 	}
 
@@ -496,8 +575,8 @@ static qhw_adm_rc_t add_estimator_option(
 	}
 
 	options = realloc(
-		device->estimator_options,
-		(device->estimator_option_count + 1) * sizeof(*options));
+		*option_array,
+		(*option_count + 1) * sizeof(*options));
 	if (options == NULL) {
 		if (option.value.type == QHW_ADM_VALUE_STRING) {
 			free((void *)option.value.value.string);
@@ -505,10 +584,34 @@ static qhw_adm_rc_t add_estimator_option(
 		return QHW_ADM_ERR_NOMEM;
 	}
 
-	device->estimator_options = options;
-	device->estimator_options[device->estimator_option_count] = option;
-	device->estimator_option_count++;
+	*option_array = options;
+	(*option_array)[*option_count] = option;
+	(*option_count)++;
 	return QHW_ADM_OK;
+}
+
+static qhw_adm_rc_t add_estimator_option(
+	struct qhw_adm_config_device *device,
+	const char *key,
+	const char *value)
+{
+	return add_option(
+		&device->estimator_options,
+		&device->estimator_option_count,
+		key,
+		value);
+}
+
+static qhw_adm_rc_t add_policy_option(
+	struct qhw_adm_config_device *device,
+	const char *key,
+	const char *value)
+{
+	return add_option(
+		&device->policy_options,
+		&device->policy_option_count,
+		key,
+		value);
 }
 
 static qhw_adm_rc_t parse_device_field(
@@ -536,8 +639,12 @@ static qhw_adm_rc_t parse_device_field(
 	if (section == QHW_ADM_CFG_ESTIMATOR_OPTIONS) {
 		return add_estimator_option(device, key, value);
 	}
-	if (section == QHW_ADM_CFG_POLICY) {
-		return QHW_ADM_OK;
+	if (section == QHW_ADM_CFG_POLICY &&
+	    strcmp(key, "name") == 0) {
+		return set_policy_name(device, value);
+	}
+	if (section == QHW_ADM_CFG_POLICY_OPTIONS) {
+		return add_policy_option(device, key, value);
 	}
 
 	return parse_device_top_field(&device->profile, key, value);
@@ -545,7 +652,8 @@ static qhw_adm_rc_t parse_device_field(
 
 static qhw_adm_rc_t parse_inline_list(
 	struct qhw_adm_pending_config *config,
-	char *value)
+	char *value,
+	enum qhw_adm_config_section section)
 {
 	char *cursor;
 	char *end;
@@ -571,8 +679,13 @@ static qhw_adm_rc_t parse_inline_list(
 		}
 		path = strip_quotes(cursor);
 		if (*path != '\0') {
-			qhw_adm_rc_t rc = add_estimator_path(config, path);
+			qhw_adm_rc_t rc;
 
+			if (section == QHW_ADM_CFG_PLUGIN_POLICIES) {
+				rc = add_policy_path(config, path);
+			} else {
+				rc = add_estimator_path(config, path);
+			}
 			if (rc != QHW_ADM_OK) {
 				return rc;
 			}
@@ -584,6 +697,13 @@ static qhw_adm_rc_t parse_inline_list(
 	}
 
 	return QHW_ADM_OK;
+}
+
+static int in_plugin_path_section(enum qhw_adm_config_section section)
+{
+	return section == QHW_ADM_CFG_PLUGIN_PATHS ||
+		section == QHW_ADM_CFG_PLUGIN_ESTIMATORS ||
+		section == QHW_ADM_CFG_PLUGIN_POLICIES;
 }
 
 static qhw_adm_rc_t parse_yaml_text(
@@ -637,6 +757,8 @@ static qhw_adm_rc_t parse_yaml_text(
 			content = trim(content + 2);
 			if (section == QHW_ADM_CFG_PLUGIN_ESTIMATORS) {
 				rc = add_estimator_path(config, strip_quotes(content));
+			} else if (section == QHW_ADM_CFG_PLUGIN_POLICIES) {
+				rc = add_policy_path(config, strip_quotes(content));
 			} else if (split_key_value(content, &key, &value) == 0 &&
 				   (section == QHW_ADM_CFG_DEVICES ||
 				    strcmp(key, "device_id") == 0)) {
@@ -664,10 +786,14 @@ static qhw_adm_rc_t parse_yaml_text(
 			section = QHW_ADM_CFG_PLUGIN_PATHS;
 		} else if (indent == 0 && strcmp(key, "devices") == 0) {
 			section = QHW_ADM_CFG_DEVICES;
-		} else if (section == QHW_ADM_CFG_PLUGIN_PATHS &&
+		} else if (in_plugin_path_section(section) &&
 			   strcmp(key, "estimators") == 0) {
 			section = QHW_ADM_CFG_PLUGIN_ESTIMATORS;
-			rc = parse_inline_list(config, value);
+			rc = parse_inline_list(config, value, section);
+		} else if (in_plugin_path_section(section) &&
+			   strcmp(key, "policies") == 0) {
+			section = QHW_ADM_CFG_PLUGIN_POLICIES;
+			rc = parse_inline_list(config, value, section);
 		} else if (current_device != NULL && strcmp(key, "baseline") == 0) {
 			section = QHW_ADM_CFG_BASELINE;
 		} else if (current_device != NULL && strcmp(key, "timing") == 0) {
@@ -685,6 +811,9 @@ static qhw_adm_rc_t parse_yaml_text(
 		} else if (current_device != NULL &&
 			   strcmp(key, "policy") == 0) {
 			section = QHW_ADM_CFG_POLICY;
+		} else if (section == QHW_ADM_CFG_POLICY &&
+			   strcmp(key, "options") == 0) {
+			section = QHW_ADM_CFG_POLICY_OPTIONS;
 		} else if (current_device != NULL) {
 			rc = parse_device_field(current_device, section, key, value);
 		}
@@ -794,6 +923,22 @@ static qhw_adm_rc_t track_loaded_estimator(
 	return QHW_ADM_OK;
 }
 
+static qhw_adm_rc_t track_loaded_policy(
+	struct qhw_adm_pending_config *config,
+	qhw_adm_policy_t *policy)
+{
+	struct qhw_adm_loaded_policy *loaded;
+
+	loaded = calloc(1, sizeof(*loaded));
+	if (loaded == NULL) {
+		return QHW_ADM_ERR_NOMEM;
+	}
+
+	loaded->policy = policy;
+	qhw_list_push_back(&config->loaded_policies, &loaded->node);
+	return QHW_ADM_OK;
+}
+
 static void rollback_loaded_estimators(
 	qhw_adm_t *ctx,
 	struct qhw_adm_pending_config *config)
@@ -809,6 +954,25 @@ static void rollback_loaded_estimators(
 			struct qhw_adm_loaded_estimator,
 			node);
 		qhw_adm_remove_estimator_entry(ctx, loaded->estimator);
+		free(loaded);
+	}
+}
+
+static void rollback_loaded_policies(
+	qhw_adm_t *ctx,
+	struct qhw_adm_pending_config *config)
+{
+	struct qhw_list_node *node;
+
+	while ((node = qhw_list_pop_front(&config->loaded_policies)) !=
+	       NULL) {
+		struct qhw_adm_loaded_policy *loaded;
+
+		loaded = qhw_container_of(
+			node,
+			struct qhw_adm_loaded_policy,
+			node);
+		qhw_adm_remove_policy_entry(ctx, loaded->policy);
 		free(loaded);
 	}
 }
@@ -865,6 +1029,46 @@ static qhw_adm_rc_t select_staged_estimator(
 		estimator,
 		device->estimator_options,
 		device->estimator_option_count);
+}
+
+static qhw_adm_rc_t select_staged_policy(
+	qhw_adm_t *ctx,
+	struct qhw_adm_pending_config *config,
+	struct qhw_adm_config_device *device,
+	struct qhw_adm_device_entry *entry)
+{
+	qhw_adm_policy_t *policy;
+	qhw_adm_rc_t rc;
+	int loaded = 0;
+
+	if (device->policy_name == NULL) {
+		return QHW_ADM_OK;
+	}
+
+	rc = qhw_adm_find_or_load_policy(
+		ctx,
+		device->policy_name,
+		config->policy_paths,
+		config->policy_path_count,
+		&policy,
+		&loaded);
+	if (rc != QHW_ADM_OK) {
+		qhw_adm_set_error(ctx, "policy was not found");
+		return rc;
+	}
+	if (loaded) {
+		rc = track_loaded_policy(config, policy);
+		if (rc != QHW_ADM_OK) {
+			qhw_adm_remove_policy_entry(ctx, policy);
+			return rc;
+		}
+	}
+
+	return qhw_adm_set_device_policy_entry(
+		entry,
+		policy,
+		device->policy_options,
+		device->policy_option_count);
 }
 
 static qhw_adm_rc_t add_current_devices(
@@ -930,6 +1134,15 @@ static qhw_adm_rc_t add_config_devices(
 			qhw_adm_free_device_entry(entry, NULL);
 			return rc;
 		}
+		rc = select_staged_policy(
+			ctx,
+			config,
+			&config->devices[i],
+			entry);
+		if (rc != QHW_ADM_OK) {
+			qhw_adm_free_device_entry(entry, NULL);
+			return rc;
+		}
 		rc = add_device_entry_to_table(table, entry);
 		if (rc != QHW_ADM_OK) {
 			qhw_adm_free_device_entry(entry, NULL);
@@ -940,10 +1153,46 @@ static qhw_adm_rc_t add_config_devices(
 	return QHW_ADM_OK;
 }
 
-static qhw_adm_rc_t build_new_path_array(
+static qhw_adm_rc_t reject_active_omitted_devices(
 	qhw_adm_t *ctx,
 	struct qhw_adm_pending_config *config,
+	uint64_t flags)
+{
+	size_t i;
+
+	if ((flags & QHW_ADM_CONFIG_REPLACE) == 0) {
+		return QHW_ADM_OK;
+	}
+
+	for (i = 0; i < ctx->devices.bucket_count; i++) {
+		struct qhw_hash_entry *hash_entry = ctx->devices.buckets[i];
+
+		while (hash_entry != NULL) {
+			struct qhw_adm_device_entry *entry = hash_entry->value;
+			uint64_t device_id = entry->profile.device_id;
+
+			hash_entry = hash_entry->next;
+			if (config_has_device(config, device_id)) {
+				continue;
+			}
+			if (qhw_adm_device_has_active_reservation(ctx, device_id)) {
+				qhw_adm_set_error(
+					ctx,
+					"device has active reservations");
+				return QHW_ADM_ERR_STATE;
+			}
+		}
+	}
+
+	return QHW_ADM_OK;
+}
+
+static qhw_adm_rc_t build_new_path_array(
 	uint64_t flags,
+	char **old_paths,
+	size_t old_path_count,
+	char **config_paths,
+	size_t config_path_count,
 	char ***out_paths,
 	size_t *out_count)
 {
@@ -954,9 +1203,9 @@ static qhw_adm_rc_t build_new_path_array(
 	size_t out_i = 0;
 
 	if ((flags & QHW_ADM_CONFIG_MERGE) != 0) {
-		old_count = ctx->estimator_path_count;
+		old_count = old_path_count;
 	}
-	count = old_count + config->estimator_path_count;
+	count = old_count + config_path_count;
 	if (count > 0) {
 		paths = calloc(count, sizeof(*paths));
 		if (paths == NULL) {
@@ -965,14 +1214,14 @@ static qhw_adm_rc_t build_new_path_array(
 	}
 
 	for (i = 0; i < old_count; i++) {
-		paths[out_i] = qhw_adm_strdup(ctx->estimator_paths[i]);
+		paths[out_i] = qhw_adm_strdup(old_paths[i]);
 		if (paths[out_i] == NULL) {
 			goto nomem;
 		}
 		out_i++;
 	}
-	for (i = 0; i < config->estimator_path_count; i++) {
-		paths[out_i] = qhw_adm_strdup(config->estimator_paths[i]);
+	for (i = 0; i < config_path_count; i++) {
+		paths[out_i] = qhw_adm_strdup(config_paths[i]);
 		if (paths[out_i] == NULL) {
 			goto nomem;
 		}
@@ -1006,8 +1255,10 @@ static qhw_adm_rc_t stage_config(
 	struct qhw_adm_pending_config *config,
 	uint64_t flags,
 	struct qhw_hash_table *new_devices,
-	char ***new_paths,
-	size_t *new_path_count)
+	char ***new_estimator_paths,
+	size_t *new_estimator_path_count,
+	char ***new_policy_paths,
+	size_t *new_policy_path_count)
 {
 	qhw_adm_rc_t rc;
 
@@ -1018,6 +1269,11 @@ static qhw_adm_rc_t stage_config(
 		config_free,
 		NULL) != 0) {
 		return QHW_ADM_ERR_NOMEM;
+	}
+
+	rc = reject_active_omitted_devices(ctx, config, flags);
+	if (rc != QHW_ADM_OK) {
+		goto fail;
 	}
 
 	if ((flags & QHW_ADM_CONFIG_MERGE) != 0) {
@@ -1032,7 +1288,26 @@ static qhw_adm_rc_t stage_config(
 		goto fail;
 	}
 
-	rc = build_new_path_array(ctx, config, flags, new_paths, new_path_count);
+	rc = build_new_path_array(
+		flags,
+		ctx->estimator_paths,
+		ctx->estimator_path_count,
+		config->estimator_paths,
+		config->estimator_path_count,
+		new_estimator_paths,
+		new_estimator_path_count);
+	if (rc != QHW_ADM_OK) {
+		goto fail;
+	}
+
+	rc = build_new_path_array(
+		flags,
+		ctx->policy_paths,
+		ctx->policy_path_count,
+		config->policy_paths,
+		config->policy_path_count,
+		new_policy_paths,
+		new_policy_path_count);
 	if (rc != QHW_ADM_OK) {
 		goto fail;
 	}
@@ -1073,22 +1348,29 @@ static void detach_moved_devices(
 static void commit_config(
 	qhw_adm_t *ctx,
 	struct qhw_hash_table *new_devices,
-	char **new_paths,
-	size_t new_path_count)
+	char **new_estimator_paths,
+	size_t new_estimator_path_count,
+	char **new_policy_paths,
+	size_t new_policy_path_count)
 {
 	struct qhw_hash_table old_devices = ctx->devices;
-	char **old_paths = ctx->estimator_paths;
-	size_t old_path_count = ctx->estimator_path_count;
+	char **old_estimator_paths = ctx->estimator_paths;
+	size_t old_estimator_path_count = ctx->estimator_path_count;
+	char **old_policy_paths = ctx->policy_paths;
+	size_t old_policy_path_count = ctx->policy_path_count;
 
 	ctx->devices = *new_devices;
 	memset(new_devices, 0, sizeof(*new_devices));
-	ctx->estimator_paths = new_paths;
-	ctx->estimator_path_count = new_path_count;
+	ctx->estimator_paths = new_estimator_paths;
+	ctx->estimator_path_count = new_estimator_path_count;
+	ctx->policy_paths = new_policy_paths;
+	ctx->policy_path_count = new_policy_path_count;
 	qhw_adm_clear_error(ctx);
 
 	detach_moved_devices(&old_devices, &ctx->devices);
 	free_hash_table_values(&old_devices, qhw_adm_free_device_entry);
-	free_path_array(old_paths, old_path_count);
+	free_path_array(old_estimator_paths, old_estimator_path_count);
+	free_path_array(old_policy_paths, old_policy_path_count);
 }
 
 qhw_adm_rc_t qhw_adm_load_config_string(
@@ -1099,8 +1381,10 @@ qhw_adm_rc_t qhw_adm_load_config_string(
 {
 	struct qhw_adm_pending_config config;
 	struct qhw_hash_table new_devices;
-	char **new_paths = NULL;
-	size_t new_path_count = 0;
+	char **new_estimator_paths = NULL;
+	size_t new_estimator_path_count = 0;
+	char **new_policy_paths = NULL;
+	size_t new_policy_path_count = 0;
 	qhw_adm_rc_t rc;
 
 	qhw_adm_pending_config_init(&config);
@@ -1125,24 +1409,38 @@ qhw_adm_rc_t qhw_adm_load_config_string(
 
 	rc = qhw_adm_lock(ctx);
 	if (rc == QHW_ADM_OK) {
+		qhw_adm_clear_output(ctx);
 		rc = stage_config(
 			ctx,
 			&config,
 			flags,
 			&new_devices,
-			&new_paths,
-			&new_path_count);
+			&new_estimator_paths,
+			&new_estimator_path_count,
+			&new_policy_paths,
+			&new_policy_path_count);
 		if (rc == QHW_ADM_OK) {
-			commit_config(ctx, &new_devices, new_paths, new_path_count);
-			new_paths = NULL;
-			new_path_count = 0;
+			commit_config(
+				ctx,
+				&new_devices,
+				new_estimator_paths,
+				new_estimator_path_count,
+				new_policy_paths,
+				new_policy_path_count);
+			new_estimator_paths = NULL;
+			new_estimator_path_count = 0;
+			new_policy_paths = NULL;
+			new_policy_path_count = 0;
 		} else {
+			free_staged_device_table(ctx, &new_devices);
 			rollback_loaded_estimators(ctx, &config);
+			rollback_loaded_policies(ctx, &config);
 		}
 		qhw_adm_unlock(ctx);
 	}
 
-	free_path_array(new_paths, new_path_count);
+	free_path_array(new_estimator_paths, new_estimator_path_count);
+	free_path_array(new_policy_paths, new_policy_path_count);
 	free_staged_device_table(ctx, &new_devices);
 	qhw_adm_pending_config_fini(&config);
 	return rc;

@@ -61,6 +61,110 @@ static size_t qhw_adm_reservation_sizeof(void)
 	return sizeof(qhw_adm_reservation_t);
 }
 
+static int qhw_adm_py_metadata_valid(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	return metadata != NULL && index < metadata_count;
+}
+
+static uint64_t qhw_adm_py_metadata_key(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0;
+	}
+
+	return metadata[index].key;
+}
+
+static uint32_t qhw_adm_py_metadata_type(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0;
+	}
+
+	return metadata[index].value.type;
+}
+
+static uint64_t qhw_adm_py_metadata_u64(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0;
+	}
+
+	return metadata[index].value.value.u64;
+}
+
+static int64_t qhw_adm_py_metadata_i64(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0;
+	}
+
+	return metadata[index].value.value.i64;
+}
+
+static double qhw_adm_py_metadata_f64(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0.0;
+	}
+
+	return metadata[index].value.value.f64;
+}
+
+static uint32_t qhw_adm_py_metadata_bool(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0;
+	}
+
+	return metadata[index].value.value.boolean;
+}
+
+static const char *qhw_adm_py_metadata_string(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return NULL;
+	}
+
+	return metadata[index].value.value.string;
+}
+
+static uintptr_t qhw_adm_py_metadata_ptr(
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	size_t index)
+{
+	if (!qhw_adm_py_metadata_valid(metadata, metadata_count, index)) {
+		return 0;
+	}
+
+	return (uintptr_t)metadata[index].value.value.ptr;
+}
+
 static qhw_adm_request_t *qhw_adm_py_request_create_single(
 	uint64_t request_id,
 	uint64_t device_id,

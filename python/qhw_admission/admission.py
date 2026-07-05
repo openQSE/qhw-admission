@@ -32,9 +32,83 @@ RESERVATION_CANCELLED = _native.QHW_ADM_RESERVATION_CANCELLED
 
 REASON_NONE = _native.QHW_ADM_REASON_NONE
 
+COMPLIANCE_ALLOW = _native.QHW_ADM_COMPLIANCE_ALLOW
+COMPLIANCE_DELAY = _native.QHW_ADM_COMPLIANCE_DELAY
+COMPLIANCE_REJECT = _native.QHW_ADM_COMPLIANCE_REJECT
+COMPLIANCE_THROTTLE = _native.QHW_ADM_COMPLIANCE_THROTTLE
+COMPLIANCE_TERMINATE = _native.QHW_ADM_COMPLIANCE_TERMINATE
+
+VALUE_U64 = _native.QHW_ADM_VALUE_U64
+VALUE_I64 = _native.QHW_ADM_VALUE_I64
+VALUE_F64 = _native.QHW_ADM_VALUE_F64
+VALUE_BOOL = _native.QHW_ADM_VALUE_BOOL
+VALUE_STRING = _native.QHW_ADM_VALUE_STRING
+VALUE_PTR = _native.QHW_ADM_VALUE_PTR
+
 
 class AdmissionError(RuntimeError):
     pass
+
+
+def _copy_metadata(metadata, metadata_count):
+    copied = []
+    if metadata is None or metadata_count == 0:
+        return tuple(copied)
+
+    for index in range(metadata_count):
+        key = _native.qhw_adm_py_metadata_key(
+            metadata,
+            metadata_count,
+            index,
+        )
+        value_type = _native.qhw_adm_py_metadata_type(
+            metadata,
+            metadata_count,
+            index,
+        )
+        if value_type == VALUE_U64:
+            value = _native.qhw_adm_py_metadata_u64(
+                metadata,
+                metadata_count,
+                index,
+            )
+        elif value_type == VALUE_I64:
+            value = _native.qhw_adm_py_metadata_i64(
+                metadata,
+                metadata_count,
+                index,
+            )
+        elif value_type == VALUE_F64:
+            value = _native.qhw_adm_py_metadata_f64(
+                metadata,
+                metadata_count,
+                index,
+            )
+        elif value_type == VALUE_BOOL:
+            value = bool(
+                _native.qhw_adm_py_metadata_bool(
+                    metadata,
+                    metadata_count,
+                    index,
+                )
+            )
+        elif value_type == VALUE_STRING:
+            value = _native.qhw_adm_py_metadata_string(
+                metadata,
+                metadata_count,
+                index,
+            )
+        elif value_type == VALUE_PTR:
+            value = _native.qhw_adm_py_metadata_ptr(
+                metadata,
+                metadata_count,
+                index,
+            )
+        else:
+            value = None
+        copied.append((key, value_type, value))
+
+    return tuple(copied)
 
 
 class Baseline:
@@ -199,9 +273,14 @@ class Decision:
         self.estimated_total_ns = native.estimated_total_ns
         self.estimated_start_ns = native.estimated_start_ns
         self.estimated_finish_ns = native.estimated_finish_ns
+        self.latest_finish_ns = native.latest_finish_ns
         self.quantum_budget_ns = native.quantum_budget_ns
         self.capacity_granted = native.capacity_granted
+        self.compliance_action = native.compliance_action
+        self.retry_after_ns = native.retry_after_ns
         self.confidence_ppm = native.confidence_ppm
+        self.message = native.message
+        self.metadata = _copy_metadata(native.metadata, native.metadata_count)
 
 
 class Reservation:
@@ -215,11 +294,21 @@ class Reservation:
         self.workload_kind = native.workload_kind
         self.state = native.state
         self.credits_reserved = native.credits_reserved
+        self.credits_consumed = native.credits_consumed
         self.rate_reserved = native.rate_reserved
+        self.rate_consumed = native.rate_consumed
         self.quantum_budget_ns = native.quantum_budget_ns
+        self.device_profile_version = native.device_profile_version
+        self.policy_version = native.policy_version
+        self.estimator_version = native.estimator_version
         self.estimated_total_ns = native.estimated_total_ns
+        self.actual_total_ns = native.actual_total_ns
+        self.unused_capacity = native.unused_capacity
+        self.overuse_count = native.overuse_count
+        self.underuse_score = native.underuse_score
         self.created_at_ns = native.created_at_ns
         self.expires_at_ns = native.expires_at_ns
+        self.metadata = _copy_metadata(native.metadata, native.metadata_count)
 
 
 class CapacityView:
@@ -227,16 +316,30 @@ class CapacityView:
         self.device_id = native.device_id
         self.scope_id = native.scope_id
         self.device_state = native.device_state
+        self.now_ns = native.now_ns
+        self.next_available_ns = native.next_available_ns
+        self.queued_baseline_units = native.queued_baseline_units
+        self.queued_estimated_ns = native.queued_estimated_ns
         self.active_reservation_count = native.active_reservation_count
         self.total_credits = native.total_credits
         self.credits_reserved = native.credits_reserved
+        self.credits_consumed = native.credits_consumed
+        self.credits_returned = native.credits_returned
         self.core_available_credits = native.core_available_credits
+        self.external_credit_limit = native.external_credit_limit
+        self.scoped_reserved_credits = native.scoped_reserved_credits
         self.effective_available_credits = native.effective_available_credits
         self.total_rate = native.total_rate
         self.rate_reserved = native.rate_reserved
+        self.rate_consumed = native.rate_consumed
+        self.rate_returned = native.rate_returned
         self.core_available_rate = native.core_available_rate
+        self.external_rate_limit = native.external_rate_limit
+        self.scoped_reserved_rate = native.scoped_reserved_rate
         self.effective_available_rate = native.effective_available_rate
         self.scheduler_policy_id = native.scheduler_policy_id
+        self.confidence_ppm = native.confidence_ppm
+        self.metadata = _copy_metadata(native.metadata, native.metadata_count)
 
 
 class AdmissionContext:
@@ -485,6 +588,11 @@ __all__ = [
     "AdmissionRequest",
     "Baseline",
     "CapacityView",
+    "COMPLIANCE_ALLOW",
+    "COMPLIANCE_DELAY",
+    "COMPLIANCE_REJECT",
+    "COMPLIANCE_TERMINATE",
+    "COMPLIANCE_THROTTLE",
     "CONFIG_MERGE",
     "CONFIG_REPLACE",
     "DECISION_ACCEPTED",
@@ -512,6 +620,12 @@ __all__ = [
     "ERR_EXISTS",
     "THREAD_USER",
     "THREAD_SAFE",
+    "VALUE_BOOL",
+    "VALUE_F64",
+    "VALUE_I64",
+    "VALUE_PTR",
+    "VALUE_STRING",
+    "VALUE_U64",
     "WORKLOAD_HYBRID_JOB",
     "WORKLOAD_QUANTUM_JOB",
 ]

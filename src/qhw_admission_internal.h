@@ -44,6 +44,13 @@ struct qhw_adm_reservation_entry {
 	void *policy_state;
 };
 
+struct qhw_adm_output_entry {
+	struct qhw_list_node node;
+	qhw_adm_kv_t *metadata;
+	size_t metadata_count;
+	char *message;
+};
+
 struct qhw_adm {
 	qhw_adm_threading_t threading;
 	qhw_adm_kv_t *options;
@@ -59,6 +66,7 @@ struct qhw_adm {
 	qhw_adm_capacity_provider_t capacity_provider;
 	uint64_t next_reservation_id;
 	int registries_initialized;
+	struct qhw_list_node output_views;
 	char last_error[QHW_ADM_ERROR_LEN];
 	pthread_mutex_t lock;
 	int lock_initialized;
@@ -74,6 +82,20 @@ qhw_adm_rc_t qhw_adm_copy_metadata(
 char *qhw_adm_strdup(const char *src);
 
 void qhw_adm_free_metadata_count(qhw_adm_kv_t *metadata, size_t count);
+
+void qhw_adm_clear_output(qhw_adm_t *ctx);
+
+qhw_adm_rc_t qhw_adm_copy_output_metadata(
+	qhw_adm_t *ctx,
+	const qhw_adm_kv_t *metadata,
+	size_t metadata_count,
+	const qhw_adm_kv_t **out_metadata,
+	size_t *out_metadata_count);
+
+qhw_adm_rc_t qhw_adm_copy_output_message(
+	qhw_adm_t *ctx,
+	const char *message,
+	const char **out_message);
 
 qhw_adm_rc_t qhw_adm_metadata_get_u64(
 	const qhw_adm_kv_t *metadata,

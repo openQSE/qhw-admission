@@ -226,6 +226,7 @@ qhw_adm_rc_t qhw_adm_register_device(
 		qhw_adm_free_device_entry(new_entry, NULL);
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	entry = qhw_hash_table_find(&ctx->devices, profile->device_id);
 	if (entry != NULL) {
@@ -271,6 +272,7 @@ qhw_adm_rc_t qhw_adm_unregister_device(qhw_adm_t *ctx, uint64_t device_id)
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	entry = qhw_hash_table_find(&ctx->devices, device_id);
 	if (entry == NULL) {
@@ -339,6 +341,7 @@ qhw_adm_rc_t qhw_adm_set_baseline(
 	if (rc != QHW_ADM_OK) {
 		return rc;
 	}
+	qhw_adm_clear_output(ctx);
 
 	entry = qhw_hash_table_find(&ctx->devices, device_id);
 	if (entry == NULL) {
