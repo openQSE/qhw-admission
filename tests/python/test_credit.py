@@ -3,6 +3,7 @@ import unittest
 
 from qhw_admission import (
     AdmissionContext,
+    AdmissionError,
     AdmissionRequest,
     Baseline,
     DECISION_ACCEPTED,
@@ -202,6 +203,40 @@ devices:
             capacity = ctx.get_capacity(7, 3)
             self.assertEqual(capacity.total_credits, 2)
             self.assertEqual(capacity.credits_reserved, 3)
+
+    def test_yaml_invalid_overcommit_ppm_rejected(self):
+        policy_dir = os.environ["QHW_ADM_TEST_CREDIT_DIR"]
+        config = f"""
+plugin_paths:
+  policies: ["{policy_dir}"]
+devices:
+  - device_id: 7
+    max_qubits: 20
+    max_shots: 10000
+    time_span_ns: 1000000000
+    baseline:
+      qubit_count: 4
+      depth: 10
+      one_q_gate_count: 10
+      two_q_gate_count: 5
+      measurement_count: 2
+      shots: 100
+    timing:
+      one_q_gate_ns: 20
+      two_q_gate_ns: 100
+      measurement_ns: 1000
+    credit:
+      total_credits: 2
+    policy:
+      name: credit
+      options:
+        allow_overcommit: true
+        overcommit_ppm: 18446744073709551615
+"""
+
+        with AdmissionContext() as ctx:
+            with self.assertRaises(AdmissionError):
+                ctx.load_config_string(config)
 
 
 if __name__ == "__main__":

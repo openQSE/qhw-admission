@@ -74,7 +74,7 @@ else:
 | Reservation TTL | `QHW_ADM_OPT_CREDIT_RESERVATION_TTL_NS` | `policy.options.reservation_ttl_ns` | Optional policy-selected reservation lease duration. |
 | Overcommit enable | `QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT` | `policy.options.allow_overcommit` | Enables bounded overcommit. |
 | Overcommit credits | `QHW_ADM_OPT_CREDIT_OVERCOMMIT_CREDITS` | `policy.options.overcommit_credits` | Adds an absolute overcommit limit. |
-| Overcommit PPM | `QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM` | `policy.options.overcommit_ppm` | Adds a proportional overcommit limit. |
+| Overcommit PPM | `QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM` | `policy.options.overcommit_ppm` | Adds a proportional overcommit limit from `0` to `1000000` PPM. |
 
 ### YAML Example
 

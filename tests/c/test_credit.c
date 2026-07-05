@@ -139,6 +139,28 @@ static void make_overcommit_options(qhw_adm_kv_t *options)
 	options[1].value.value.u64 = 1;
 }
 
+static void make_invalid_overcommit_ppm_options(qhw_adm_kv_t *options)
+{
+	memset(options, 0, 2 * sizeof(*options));
+	options[0].key = QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT;
+	options[0].value.type = QHW_ADM_VALUE_BOOL;
+	options[0].value.value.boolean = 1;
+	options[1].key = QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM;
+	options[1].value.type = QHW_ADM_VALUE_U64;
+	options[1].value.value.u64 = UINT64_MAX;
+}
+
+static void make_invalid_overcommit_credit_options(qhw_adm_kv_t *options)
+{
+	memset(options, 0, 2 * sizeof(*options));
+	options[0].key = QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT;
+	options[0].value.type = QHW_ADM_VALUE_BOOL;
+	options[0].value.value.boolean = 1;
+	options[1].key = QHW_ADM_OPT_CREDIT_OVERCOMMIT_CREDITS;
+	options[1].value.type = QHW_ADM_VALUE_U64;
+	options[1].value.value.u64 = UINT64_MAX;
+}
+
 static int setup_context(
 	uint64_t total_credits,
 	const qhw_adm_kv_t *options,
@@ -410,6 +432,70 @@ static int test_overcommit_limit_rejects_oversized_request(void)
 	return 0;
 }
 
+static int test_invalid_overcommit_configuration(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_device_profile_t profile = make_profile(2);
+	qhw_adm_kv_t options[2];
+
+	make_invalid_overcommit_ppm_options(options);
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_register_device(ctx, &profile) == QHW_ADM_OK);
+	CHECK(qhw_adm_add_policy_path(ctx, QHW_ADM_TEST_CREDIT_DIR) ==
+		QHW_ADM_OK);
+	CHECK(qhw_adm_set_policy(ctx, profile.device_id, "credit",
+		options, 2) == QHW_ADM_ERR_INVAL);
+	qhw_adm_destroy(ctx);
+
+	ctx = NULL;
+	make_invalid_overcommit_credit_options(options);
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_register_device(ctx, &profile) == QHW_ADM_OK);
+	CHECK(qhw_adm_add_policy_path(ctx, QHW_ADM_TEST_CREDIT_DIR) ==
+		QHW_ADM_OK);
+	CHECK(qhw_adm_set_policy(ctx, profile.device_id, "credit",
+		options, 2) == QHW_ADM_ERR_INVAL);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_yaml_invalid_overcommit_configuration(void)
+{
+	qhw_adm_t *ctx = NULL;
+	const char *yaml =
+		"plugin_paths:\n"
+		"  policies: [\"" QHW_ADM_TEST_CREDIT_DIR "\"]\n"
+		"devices:\n"
+		"  - device_id: 7\n"
+		"    max_qubits: 20\n"
+		"    max_shots: 10000\n"
+		"    time_span_ns: 1000000000\n"
+		"    baseline:\n"
+		"      qubit_count: 4\n"
+		"      depth: 10\n"
+		"      one_q_gate_count: 10\n"
+		"      two_q_gate_count: 5\n"
+		"      shots: 100\n"
+		"      measurement_count: 2\n"
+		"    timing:\n"
+		"      one_q_gate_ns: 20\n"
+		"      two_q_gate_ns: 100\n"
+		"      measurement_ns: 1000\n"
+		"    credit:\n"
+		"      total_credits: 2\n"
+		"    policy:\n"
+		"      name: credit\n"
+		"      options:\n"
+		"        allow_overcommit: true\n"
+		"        overcommit_ppm: 18446744073709551615\n";
+
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_load_config_string(ctx, yaml, 0,
+		QHW_ADM_CONFIG_MERGE) == QHW_ADM_ERR_INVAL);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
 static int test_cancel_and_expire_return_capacity(void)
 {
 	qhw_adm_t *ctx = NULL;
@@ -474,6 +560,8 @@ int main(void)
 	CHECK(test_oversized_request_is_rejected() == 0);
 	CHECK(test_bounded_overcommit_accepts_exact_limit() == 0);
 	CHECK(test_overcommit_limit_rejects_oversized_request() == 0);
+	CHECK(test_invalid_overcommit_configuration() == 0);
+	CHECK(test_yaml_invalid_overcommit_configuration() == 0);
 	CHECK(test_cancel_and_expire_return_capacity() == 0);
 	CHECK(test_invalid_configuration() == 0);
 	return 0;

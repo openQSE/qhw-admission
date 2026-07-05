@@ -1292,7 +1292,7 @@ Configuration:
 | `reservation_ttl_ns` | Policy default used to fill `qhw_adm_policy_grant_t.ttl_ns` for accepted reservations. |
 | `allow_overcommit` | Enable bounded overcommit for testing or explicit site policy. |
 | `overcommit_credits` | Maximum credits that can be admitted beyond `total_credits` when overcommit is enabled. |
-| `overcommit_ppm` | Optional overcommit limit as parts per million of `total_credits`. |
+| `overcommit_ppm` | Optional overcommit limit as parts per million of `total_credits`. Valid values are `0` through `1000000`. |
 
 Credit capacity is selected before policy evaluation:
 

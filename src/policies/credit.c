@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define CREDIT_PPM_SCALE UINT64_C(1000000)
+#define CREDIT_MAX_OVERCOMMIT_PPM CREDIT_PPM_SCALE
 
 struct credit_state {
 	uint64_t reservation_ttl_ns;
@@ -103,6 +104,9 @@ static qhw_adm_rc_t credit_apply_option(
 		if (!credit_option_u64(
 			&option->value,
 			&state->overcommit_ppm)) {
+			return QHW_ADM_ERR_INVAL;
+		}
+		if (state->overcommit_ppm > CREDIT_MAX_OVERCOMMIT_PPM) {
 			return QHW_ADM_ERR_INVAL;
 		}
 		return QHW_ADM_OK;
@@ -209,6 +213,22 @@ static qhw_adm_rc_t credit_overcommit_limit(
 	return QHW_ADM_OK;
 }
 
+static qhw_adm_rc_t credit_validate_state(
+	const struct credit_state *state,
+	const qhw_adm_device_profile_t *device)
+{
+	uint64_t limit;
+
+	if (state == NULL || device == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if (device->total_credits == 0) {
+		return QHW_ADM_OK;
+	}
+
+	return credit_overcommit_limit(state, device->total_credits, &limit);
+}
+
 static qhw_adm_rc_t credit_init(
 	const qhw_adm_device_profile_t *device,
 	const qhw_adm_kv_t *options,
@@ -230,6 +250,12 @@ static qhw_adm_rc_t credit_init(
 	}
 
 	rc = credit_configure_state(state, options, option_count);
+	if (rc != QHW_ADM_OK) {
+		free(state);
+		return rc;
+	}
+
+	rc = credit_validate_state(state, device);
 	if (rc != QHW_ADM_OK) {
 		free(state);
 		return rc;
@@ -339,7 +365,11 @@ static qhw_adm_rc_t credit_fill_decision(
 		capacity->total_credits,
 		&effective_limit);
 	if (rc != QHW_ADM_OK) {
-		return rc;
+		out_decision->decision = QHW_ADM_DECISION_REJECTED;
+		out_decision->reason_code = QHW_ADM_REASON_INVALID_REQUEST;
+		out_decision->compliance_action = QHW_ADM_COMPLIANCE_REJECT;
+		out_decision->message = "credit overcommit limit is invalid";
+		return QHW_ADM_OK;
 	}
 
 	if (credits_required > effective_limit) {
