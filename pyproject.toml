@@ -1,0 +1,17 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "qhw-admission"
+version = "0.1.0"
+description = "Admission-control C ABI with Python bindings"
+requires-python = ">=3.9"
+
+[tool.scikit-build]
+wheel.packages = ["python/qhw_admission"]
+
+[tool.scikit-build.cmake.define]
+QHW_ADM_BUILD_TESTS = "OFF"
+QHW_ADM_BUILD_PYTHON = "ON"
+QHW_ADM_INSTALL_PYTHON_ARTIFACTS = "ON"

@@ -1747,7 +1747,7 @@ void qhw_adm_destroy(qhw_adm_t *ctx);
 const char *qhw_adm_last_error(const qhw_adm_t *ctx);
 
 qhw_adm_rc_t qhw_adm_get_threading(
-	const qhw_adm_t *ctx,
+	qhw_adm_t *ctx,
 	qhw_adm_threading_t *out_threading);
 ```
 
