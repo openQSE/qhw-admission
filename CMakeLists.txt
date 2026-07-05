@@ -429,6 +429,22 @@ if(QHW_ADM_BUILD_PYTHON)
         INSTALL_RPATH "$ORIGIN/native:$ORIGIN")
     add_dependencies(_qhw_admission_c qhw_admission_python_tree)
 
+    set(QHW_ADM_PYTHON_INSTALL_TEST_DIR
+        ${CMAKE_CURRENT_BINARY_DIR}/python-installed)
+    add_custom_target(qhw_admission_python_install_tree ALL
+        COMMAND
+            ${CMAKE_COMMAND} -E rm -rf
+            ${QHW_ADM_PYTHON_INSTALL_TEST_DIR}
+        COMMAND
+            ${CMAKE_COMMAND} -E make_directory
+            ${QHW_ADM_PYTHON_INSTALL_TEST_DIR}
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_directory
+            ${QHW_ADM_PYTHON_BUILD_DIR}
+            ${QHW_ADM_PYTHON_INSTALL_TEST_DIR}/qhw_admission
+        DEPENDS
+            _qhw_admission_c)
+
     if(QHW_ADM_INSTALL_PYTHON_ARTIFACTS)
         install(
             TARGETS _qhw_admission_c
@@ -502,5 +518,16 @@ if(QHW_ADM_BUILD_PYTHON AND QHW_ADM_BUILD_TESTS)
                 ${Python3_EXECUTABLE}
                 -S
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_rate.py)
+        add_test(
+            NAME test_python_installed_package
+            COMMAND
+                ${CMAKE_COMMAND} -E env
+                PYTHONPATH=${QHW_ADM_PYTHON_INSTALL_TEST_DIR}
+                QHW_ADM_TEST_UNLIMITED_DIR=${CMAKE_CURRENT_BINARY_DIR}/policies
+                QHW_ADM_TEST_CREDIT_DIR=${CMAKE_CURRENT_BINARY_DIR}/policies
+                QHW_ADM_TEST_RATE_DIR=${CMAKE_CURRENT_BINARY_DIR}/policies
+                ${Python3_EXECUTABLE}
+                -S
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/python/test_package_integration.py)
     endif()
 endif()

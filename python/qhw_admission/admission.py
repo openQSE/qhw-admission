@@ -17,6 +17,11 @@ THREAD_SAFE = _native.QHW_ADM_THREAD_SAFE
 CONFIG_MERGE = _native.QHW_ADM_CONFIG_MERGE_VALUE
 CONFIG_REPLACE = _native.QHW_ADM_CONFIG_REPLACE_VALUE
 
+DEVICE_AVAILABLE = _native.QHW_ADM_DEVICE_AVAILABLE
+DEVICE_UNAVAILABLE = _native.QHW_ADM_DEVICE_UNAVAILABLE
+DEVICE_DRAINING = _native.QHW_ADM_DEVICE_DRAINING
+DEVICE_MAINTENANCE = _native.QHW_ADM_DEVICE_MAINTENANCE
+
 WORKLOAD_QUANTUM_JOB = _native.QHW_ADM_WORKLOAD_QUANTUM_JOB
 WORKLOAD_HYBRID_JOB = _native.QHW_ADM_WORKLOAD_HYBRID_JOB
 
@@ -31,6 +36,66 @@ RESERVATION_EXPIRED = _native.QHW_ADM_RESERVATION_EXPIRED
 RESERVATION_CANCELLED = _native.QHW_ADM_RESERVATION_CANCELLED
 
 REASON_NONE = _native.QHW_ADM_REASON_NONE
+REASON_ACCEPTED = _native.QHW_ADM_REASON_ACCEPTED
+REASON_DEVICE_NOT_FOUND = _native.QHW_ADM_REASON_DEVICE_NOT_FOUND
+REASON_DEVICE_UNAVAILABLE = _native.QHW_ADM_REASON_DEVICE_UNAVAILABLE
+REASON_INVALID_REQUEST = _native.QHW_ADM_REASON_INVALID_REQUEST
+REASON_ESTIMATOR_FAILED = _native.QHW_ADM_REASON_ESTIMATOR_FAILED
+REASON_POLICY_FAILED = _native.QHW_ADM_REASON_POLICY_FAILED
+REASON_INSUFFICIENT_CREDITS = _native.QHW_ADM_REASON_INSUFFICIENT_CREDITS
+REASON_INSUFFICIENT_RATE = _native.QHW_ADM_REASON_INSUFFICIENT_RATE
+REASON_REQUEST_TOO_LARGE = _native.QHW_ADM_REASON_REQUEST_TOO_LARGE
+REASON_WALLTIME_INFEASIBLE = _native.QHW_ADM_REASON_WALLTIME_INFEASIBLE
+REASON_RESERVATION_NOT_FOUND = _native.QHW_ADM_REASON_RESERVATION_NOT_FOUND
+REASON_RESERVATION_TERMINAL = _native.QHW_ADM_REASON_RESERVATION_TERMINAL
+REASON_OVER_LIMIT = _native.QHW_ADM_REASON_OVER_LIMIT
+REASON_UNSUPPORTED = _native.QHW_ADM_REASON_UNSUPPORTED
+REASON_OBJECT_EXISTS = _native.QHW_ADM_REASON_OBJECT_EXISTS
+REASON_ACTIVE_RESERVATIONS = _native.QHW_ADM_REASON_ACTIVE_RESERVATIONS
+REASON_SCOPE_LIMIT = _native.QHW_ADM_REASON_SCOPE_LIMIT
+REASON_USAGE_NOT_AUTHORIZED = _native.QHW_ADM_REASON_USAGE_NOT_AUTHORIZED
+
+META_WORKLOAD_KIND = _native.QHW_ADM_META_WORKLOAD_KIND
+META_SESSION_ID = _native.QHW_ADM_META_SESSION_ID
+META_SCOPE_ID = _native.QHW_ADM_META_SCOPE_ID
+META_DEADLINE_NS = _native.QHW_ADM_META_DEADLINE_NS
+META_LATEST_START_NS = _native.QHW_ADM_META_LATEST_START_NS
+META_LATEST_FINISH_NS = _native.QHW_ADM_META_LATEST_FINISH_NS
+META_QOS_CLASS = _native.QHW_ADM_META_QOS_CLASS
+META_LAYER_COUNT = _native.QHW_ADM_META_LAYER_COUNT
+META_BATCH_COUNT = _native.QHW_ADM_META_BATCH_COUNT
+META_PROVIDER_BATCHING = _native.QHW_ADM_META_PROVIDER_BATCHING
+META_COMPILE_NS = _native.QHW_ADM_META_COMPILE_NS
+META_LOWERING_NS = _native.QHW_ADM_META_LOWERING_NS
+META_TRANSFER_NS = _native.QHW_ADM_META_TRANSFER_NS
+META_CONTROL_OVERHEAD_NS = _native.QHW_ADM_META_CONTROL_OVERHEAD_NS
+META_PROVIDER_OVERHEAD_NS = _native.QHW_ADM_META_PROVIDER_OVERHEAD_NS
+META_ONE_Q_GATE_NS = _native.QHW_ADM_META_ONE_Q_GATE_NS
+META_TWO_Q_GATE_NS = _native.QHW_ADM_META_TWO_Q_GATE_NS
+META_MEASUREMENT_NS = _native.QHW_ADM_META_MEASUREMENT_NS
+META_ONE_Q_GATE_TRANSFER_NS = _native.QHW_ADM_META_ONE_Q_GATE_TRANSFER_NS
+META_TWO_Q_GATE_TRANSFER_NS = _native.QHW_ADM_META_TWO_Q_GATE_TRANSFER_NS
+META_MEASUREMENT_TRANSFER_NS = _native.QHW_ADM_META_MEASUREMENT_TRANSFER_NS
+META_LOGICAL_QUBITS = _native.QHW_ADM_META_LOGICAL_QUBITS
+META_LOGICAL_CYCLES = _native.QHW_ADM_META_LOGICAL_CYCLES
+META_T_COUNT = _native.QHW_ADM_META_T_COUNT
+META_T_DEPTH = _native.QHW_ADM_META_T_DEPTH
+META_TARGET_LOGICAL_ERROR_PPM = (
+    _native.QHW_ADM_META_TARGET_LOGICAL_ERROR_PPM
+)
+META_CODE_FAMILY = _native.QHW_ADM_META_CODE_FAMILY
+META_CODE_DISTANCE = _native.QHW_ADM_META_CODE_DISTANCE
+META_MAGIC_STATE_COUNT = _native.QHW_ADM_META_MAGIC_STATE_COUNT
+META_DECODER_OVERHEAD_NS = _native.QHW_ADM_META_DECODER_OVERHEAD_NS
+META_CLASSICAL_CONTROL_OVERHEAD_NS = (
+    _native.QHW_ADM_META_CLASSICAL_CONTROL_OVERHEAD_NS
+)
+META_ESTIMATOR_VERSION = _native.QHW_ADM_META_ESTIMATOR_VERSION
+META_OBSERVED_DEVICE_NS = _native.QHW_ADM_META_OBSERVED_DEVICE_NS
+META_CONSUMED_CREDITS = _native.QHW_ADM_META_CONSUMED_CREDITS
+META_CONSUMED_RATE = _native.QHW_ADM_META_CONSUMED_RATE
+META_UNUSED_CAPACITY = _native.QHW_ADM_META_UNUSED_CAPACITY
+META_OVER_LIMIT_EVENTS = _native.QHW_ADM_META_OVER_LIMIT_EVENTS
 
 COMPLIANCE_ALLOW = _native.QHW_ADM_COMPLIANCE_ALLOW
 COMPLIANCE_DELAY = _native.QHW_ADM_COMPLIANCE_DELAY
@@ -186,6 +251,39 @@ class DeviceProfile:
         self._native.default_ttl_ns = default_ttl_ns
         self._native.metadata = None
         self._native.metadata_count = 0
+
+
+class BaselineView:
+    def __init__(self, native):
+        self.qubit_count = native.qubit_count
+        self.depth = native.depth
+        self.one_q_gate_count = native.one_q_gate_count
+        self.two_q_gate_count = native.two_q_gate_count
+        self.shots = native.shots
+        self.measurement_count = native.measurement_count
+
+
+class DeviceProfileView:
+    def __init__(self, native):
+        self.device_id = native.device_id
+        self.time_span_ns = native.time_span_ns
+        self.baseline = BaselineView(native.baseline)
+        self.max_qubits = native.max_qubits
+        self.max_shots = native.max_shots
+        self.one_q_gate_ns = native.one_q_gate_ns
+        self.two_q_gate_ns = native.two_q_gate_ns
+        self.measurement_ns = native.measurement_ns
+        self.one_q_gate_transfer_ns = native.one_q_gate_transfer_ns
+        self.two_q_gate_transfer_ns = native.two_q_gate_transfer_ns
+        self.measurement_transfer_ns = native.measurement_transfer_ns
+        self.compile_ns = native.compile_ns
+        self.control_overhead_ns = native.control_overhead_ns
+        self.provider_overhead_ns = native.provider_overhead_ns
+        self.total_credits = native.total_credits
+        self.device_rate = native.device_rate
+        self.concurrent_jobs = native.concurrent_jobs
+        self.default_ttl_ns = native.default_ttl_ns
+        self.metadata = _copy_metadata(native.metadata, native.metadata_count)
 
 
 class QtaskClass:
@@ -524,6 +622,14 @@ class AdmissionContext:
         rc = _native.qhw_adm_unregister_device(self._ctx, device_id)
         self._check_rc(rc, "qhw_adm_unregister_device")
 
+    def get_device(self, device_id):
+        self._require_open()
+        profile = _native.qhw_adm_device_profile_t()
+        profile.struct_size = _native.qhw_adm_device_profile_sizeof()
+        rc = _native.qhw_adm_get_device(self._ctx, device_id, profile)
+        self._check_rc(rc, "qhw_adm_get_device")
+        return DeviceProfileView(profile)
+
     def set_baseline(self, device_id, baseline):
         self._require_open()
         rc = _native.qhw_adm_set_baseline(
@@ -738,6 +844,7 @@ __all__ = [
     "AdmissionRequest",
     "ActualUsage",
     "Baseline",
+    "BaselineView",
     "CapacityView",
     "Compliance",
     "COMPLIANCE_ALLOW",
@@ -750,11 +857,34 @@ __all__ = [
     "DECISION_ACCEPTED",
     "DECISION_DELAYED",
     "DECISION_REJECTED",
+    "DEVICE_AVAILABLE",
+    "DEVICE_DRAINING",
+    "DEVICE_MAINTENANCE",
+    "DEVICE_UNAVAILABLE",
     "Decision",
     "DeviceProfile",
+    "DeviceProfileView",
     "Estimate",
     "QtaskClass",
+    "REASON_ACCEPTED",
+    "REASON_ACTIVE_RESERVATIONS",
+    "REASON_DEVICE_NOT_FOUND",
+    "REASON_DEVICE_UNAVAILABLE",
+    "REASON_ESTIMATOR_FAILED",
+    "REASON_INSUFFICIENT_CREDITS",
+    "REASON_INSUFFICIENT_RATE",
+    "REASON_INVALID_REQUEST",
     "REASON_NONE",
+    "REASON_OBJECT_EXISTS",
+    "REASON_OVER_LIMIT",
+    "REASON_POLICY_FAILED",
+    "REASON_REQUEST_TOO_LARGE",
+    "REASON_RESERVATION_NOT_FOUND",
+    "REASON_RESERVATION_TERMINAL",
+    "REASON_SCOPE_LIMIT",
+    "REASON_UNSUPPORTED",
+    "REASON_USAGE_NOT_AUTHORIZED",
+    "REASON_WALLTIME_INFEASIBLE",
     "RESERVATION_ACTIVE",
     "RESERVATION_CANCELLED",
     "RESERVATION_EXPIRED",
@@ -763,6 +893,43 @@ __all__ = [
     "Reservation",
     "Usage",
     "UsageState",
+    "META_BATCH_COUNT",
+    "META_CLASSICAL_CONTROL_OVERHEAD_NS",
+    "META_CODE_DISTANCE",
+    "META_CODE_FAMILY",
+    "META_COMPILE_NS",
+    "META_CONSUMED_CREDITS",
+    "META_CONSUMED_RATE",
+    "META_CONTROL_OVERHEAD_NS",
+    "META_DEADLINE_NS",
+    "META_DECODER_OVERHEAD_NS",
+    "META_ESTIMATOR_VERSION",
+    "META_LAYER_COUNT",
+    "META_LATEST_FINISH_NS",
+    "META_LATEST_START_NS",
+    "META_LOGICAL_CYCLES",
+    "META_LOGICAL_QUBITS",
+    "META_LOWERING_NS",
+    "META_MAGIC_STATE_COUNT",
+    "META_MEASUREMENT_NS",
+    "META_MEASUREMENT_TRANSFER_NS",
+    "META_OBSERVED_DEVICE_NS",
+    "META_ONE_Q_GATE_NS",
+    "META_ONE_Q_GATE_TRANSFER_NS",
+    "META_OVER_LIMIT_EVENTS",
+    "META_PROVIDER_BATCHING",
+    "META_PROVIDER_OVERHEAD_NS",
+    "META_QOS_CLASS",
+    "META_SCOPE_ID",
+    "META_SESSION_ID",
+    "META_TARGET_LOGICAL_ERROR_PPM",
+    "META_TRANSFER_NS",
+    "META_T_COUNT",
+    "META_T_DEPTH",
+    "META_TWO_Q_GATE_NS",
+    "META_TWO_Q_GATE_TRANSFER_NS",
+    "META_UNUSED_CAPACITY",
+    "META_WORKLOAD_KIND",
     "OK",
     "OPT_CREDIT_ALLOW_OVERCOMMIT",
     "OPT_CREDIT_OVERCOMMIT_CREDITS",
