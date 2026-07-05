@@ -1,0 +1,63 @@
+.TH QHW_ADM_TYPES 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_adm_types \- public qhw-admission data structures and constants
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission_types.h>
+.fi
+.SH DESCRIPTION
+The public ABI uses value structures for inputs and caller-allocated output
+snapshots. Long-lived objects use opaque handles.
+.SH IMPORTANT TYPES
+.TP
+.B qhw_adm_attr_t
+Context creation attributes.
+.TP
+.B qhw_adm_kv_t
+Typed key-value metadata and option entry.
+.TP
+.B qhw_adm_baseline_t
+Baseline circuit shape used as the accounting unit.
+.TP
+.B qhw_adm_device_profile_t
+Managed device profile, including timing fields and capacity configuration.
+.TP
+.B qhw_adm_qtask_class_t
+Resource-estimation shape for one repeated qtask class.
+.TP
+.B qhw_adm_request_t
+Job-level admission request.
+.TP
+.B qhw_adm_estimate_t
+Estimator output with timing, baseline units, and confidence.
+.TP
+.B qhw_adm_decision_t
+Structured accepted, delayed, or rejected decision.
+.TP
+.B qhw_adm_reservation_t
+Published reservation state and accounting counters.
+.TP
+.B qhw_adm_usage_t
+Estimated or returned qtask usage event.
+.TP
+.B qhw_adm_usage_state_t
+Reservation usage snapshot.
+.TP
+.B qhw_adm_compliance_t
+Compliance and policy-action snapshot.
+.TP
+.B qhw_adm_actual_usage_t
+Measured timing record used for feedback.
+.TP
+.B qhw_adm_policy_desc_t
+Policy plugin descriptor.
+.TP
+.B qhw_adm_estimator_desc_t
+Estimator plugin descriptor.
+.SH STRUCTURE SIZE
+Set each structure's
+.I struct_size
+field before passing it to the API. The implementation uses this value for ABI
+guarding.
+.SH SEE ALSO
+.BR qhw_admission (3)

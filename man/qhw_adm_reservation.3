@@ -1,0 +1,76 @@
+.TH QHW_ADM_RESERVATION 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_adm_evaluate, qhw_adm_reserve, qhw_adm_get_reservation,
+qhw_adm_release, qhw_adm_cancel, qhw_adm_renew,
+qhw_adm_expire \- evaluate and manage reservations
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission.h>
+
+qhw_adm_rc_t qhw_adm_evaluate(
+	qhw_adm_t *ctx,
+	const qhw_adm_request_t *request,
+	qhw_adm_decision_t *out_decision);
+
+qhw_adm_rc_t qhw_adm_reserve(
+	qhw_adm_t *ctx,
+	const qhw_adm_request_t *request,
+	qhw_adm_decision_t *out_decision);
+
+qhw_adm_rc_t qhw_adm_get_reservation(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	qhw_adm_reservation_t *out_reservation);
+
+qhw_adm_rc_t qhw_adm_release(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	uint64_t reason_code);
+
+qhw_adm_rc_t qhw_adm_cancel(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	uint64_t reason_code);
+
+qhw_adm_rc_t qhw_adm_renew(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	uint64_t now_ns,
+	uint64_t ttl_ns);
+
+qhw_adm_rc_t qhw_adm_expire(
+	qhw_adm_t *ctx,
+	uint64_t now_ns,
+	size_t *out_expired_count);
+.fi
+.SH DESCRIPTION
+.BR qhw_adm_evaluate ()
+runs admission without committing capacity.
+.PP
+.BR qhw_adm_reserve ()
+commits accepted capacity and publishes a reservation. If the request supplies
+reservation ID zero, the core allocates a nonzero ID.
+.PP
+.BR qhw_adm_get_reservation ()
+returns reservation state and accounting counters.
+.PP
+.BR qhw_adm_release (),
+.BR qhw_adm_cancel (),
+and
+.BR qhw_adm_expire ()
+move active reservations to terminal states and return unused capacity.
+.PP
+.BR qhw_adm_renew ()
+updates the expiration time for an active reservation.
+.SH RETURN VALUES
+Reservation functions return
+.B QHW_ADM_OK
+on success. A delayed or rejected policy result is returned inside
+.B qhw_adm_decision_t
+with
+.B QHW_ADM_OK
+when the API call itself succeeds.
+.SH SEE ALSO
+.BR qhw_admission (3),
+.BR qhw_adm_usage (3),
+.BR qhw_adm_types (3)

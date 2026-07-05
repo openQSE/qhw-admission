@@ -1,8 +1,17 @@
 # qhw-admission
 
-`qhw-admission` is a C admission-control library for quantum resources. It
-builds a shared core library, loadable policy plugins, and SWIG-based Python
-bindings.
+`qhw-admission` is a C admission-control library for managed quantum
+resources. It evaluates job-level requests against device profiles, resource
+estimators, admission policies, and active reservations. It returns structured
+decisions that a resource manager, runtime service, or simulator can translate
+into site behavior.
+
+The repository builds:
+
+- `libqhw_admission.so`
+- standard policy plugins: `unlimited`, `credit`, and `rate`
+- SWIG-based Python bindings
+- C and Python tests
 
 ## Build
 
@@ -12,28 +21,34 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ```
 
+Build without the standard policy plugins:
+
+```bash
+cmake -S . -B build-noplugins -DQHW_ADM_BUILD_PLUGINS=OFF
+cmake --build build-noplugins -j
+```
+
 ## Test
 
-Run the full C and Python test suite:
+Run the full test suite:
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-Run one policy test directly:
+Run one test by name:
 
 ```bash
 ctest --test-dir build -R test_credit --output-on-failure
 ctest --test-dir build -R test_python_credit --output-on-failure
 ctest --test-dir build -R test_rate --output-on-failure
 ctest --test-dir build -R test_python_rate --output-on-failure
+ctest --test-dir build -R test_python_installed_package --output-on-failure
 ```
 
-Build without the standard policy plugins:
+Run the no-plugin configuration:
 
 ```bash
-cmake -S . -B build-noplugins -DQHW_ADM_BUILD_PLUGINS=OFF
-cmake --build build-noplugins -j
 ctest --test-dir build-noplugins --output-on-failure
 ```
 
@@ -43,89 +58,102 @@ ctest --test-dir build-noplugins --output-on-failure
 cmake --install build --prefix install
 ```
 
-The core library installs under `install/lib`. Standard `unlimited`, `credit`,
-and `rate` policy plugins install under `install/lib/qhw_admission/policies`.
-
-## Credit Policy Configuration
-
-The credit policy admits reservations against a finite credit budget. One
-credit represents one baseline circuit unit. Request demand is computed by the
-selected estimator and reported as baseline units.
-
-The credit budget can be configured explicitly or derived automatically.
-Explicit credits take precedence.
+The install tree contains:
 
 ```text
-if total_credits != 0:
-  credit_capacity = total_credits
-else:
-  estimated_baseline_ns = estimator(device_profile, baseline_circuit)
-  credit_capacity = floor(time_span_ns / estimated_baseline_ns)
+install/include/qhw_admission/
+install/lib/libqhw_admission.so
+install/lib/qhw_admission/policies/qhw_adm_unlimited.so
+install/lib/qhw_admission/policies/qhw_adm_credit.so
+install/lib/qhw_admission/policies/qhw_adm_rate.so
+install/share/man/man3/
 ```
 
-### Configurable Inputs
+Build a Python wheel when `scikit-build-core` is available:
 
-| Input | C field or API | YAML key | Purpose |
-|---|---|---|---|
-| Explicit credits | `qhw_adm_device_profile_t.total_credits` | `credit.total_credits` | Overrides derived credit capacity when nonzero. |
-| Estimator | `qhw_adm_set_estimator()` | `estimator.name` | Computes baseline and request cost. |
-| Timing window | `qhw_adm_device_profile_t.time_span_ns` | `time_span_ns` | Accounting window used when deriving credits. |
-| Device profile | `qhw_adm_register_device()` | `devices[]` | Supplies timing, limits, and baseline shape. |
-| Baseline circuit | `qhw_adm_device_profile_t.baseline` | `baseline` | Defines one credit unit. |
-| Policy | `qhw_adm_set_policy(..., "credit", ...)` | `policy.name: credit` | Selects credit admission for the device. |
-| Reservation TTL | `QHW_ADM_OPT_CREDIT_RESERVATION_TTL_NS` | `policy.options.reservation_ttl_ns` | Optional policy-selected reservation lease duration. |
-| Overcommit enable | `QHW_ADM_OPT_CREDIT_ALLOW_OVERCOMMIT` | `policy.options.allow_overcommit` | Enables bounded overcommit. |
-| Overcommit credits | `QHW_ADM_OPT_CREDIT_OVERCOMMIT_CREDITS` | `policy.options.overcommit_credits` | Adds an absolute overcommit limit. |
-| Overcommit PPM | `QHW_ADM_OPT_CREDIT_OVERCOMMIT_PPM` | `policy.options.overcommit_ppm` | Adds a proportional overcommit limit from `0` to `1000000` PPM. |
-
-### YAML Example
-
-This example derives credits from `time_span_ns` because `total_credits` is
-zero.
-
-```yaml
-plugin_paths:
-  policies: ["build/policies"]
-devices:
-  - device_id: 7
-    max_qubits: 20
-    max_shots: 10000
-    time_span_ns: 1000000000
-    baseline:
-      qubit_count: 4
-      depth: 10
-      one_q_gate_count: 10
-      two_q_gate_count: 5
-      measurement_count: 2
-      shots: 100
-    timing:
-      one_q_gate_ns: 20
-      two_q_gate_ns: 100
-      measurement_ns: 1000
-      one_q_gate_transfer_ns: 1
-      two_q_gate_transfer_ns: 4
-      measurement_transfer_ns: 10
-      compile_ns: 1000
-      control_overhead_ns: 200
-      provider_overhead_ns: 300
-    credit:
-      total_credits: 0
-    policy:
-      name: credit
-      options:
-        allow_overcommit: false
+```bash
+python3 -m pip wheel . --no-deps --no-build-isolation -w dist
+python3 -m pip install dist/qhw_admission-*.whl
 ```
 
-This example overrides derived capacity:
+For development, build the package in editable mode:
 
-```yaml
-credit:
-  total_credits: 100
+```bash
+python3 -m pip install -e . --no-build-isolation
 ```
 
-### C Example
+## Python Quick Start
+
+```python
+from qhw_admission import (
+    AdmissionContext,
+    AdmissionRequest,
+    Baseline,
+    DECISION_ACCEPTED,
+    DeviceProfile,
+    QtaskClass,
+    WORKLOAD_HYBRID_JOB,
+)
+
+baseline = Baseline(
+    qubit_count=4,
+    depth=10,
+    one_q_gate_count=10,
+    two_q_gate_count=5,
+    shots=100,
+    measurement_count=2,
+)
+
+profile = DeviceProfile(
+    device_id=7,
+    time_span_ns=1_000_000_000,
+    baseline=baseline,
+    max_qubits=20,
+    max_shots=10_000,
+    one_q_gate_ns=20,
+    two_q_gate_ns=100,
+    measurement_ns=1000,
+    total_credits=10,
+)
+
+task = QtaskClass(
+    class_id=11,
+    count=2,
+    qubit_count=4,
+    depth=12,
+    one_q_gate_count=20,
+    two_q_gate_count=10,
+    shots=100,
+    measurement_count=2,
+)
+
+request = AdmissionRequest(
+    request_id=42,
+    device_id=7,
+    user_id=1000,
+    job_id=2000,
+    scope_id=3,
+    workload_kind=WORKLOAD_HYBRID_JOB,
+    walltime_ns=2_000_000_000,
+    task_class=task,
+)
+
+with AdmissionContext() as ctx:
+    ctx.register_device(profile)
+    ctx.add_policy_path("build/policies")
+    ctx.set_policy(7, "credit")
+
+    decision = ctx.reserve(request)
+    if decision.decision == DECISION_ACCEPTED:
+        print("reservation", decision.reservation_id)
+```
+
+## C Quick Start
 
 ```c
+#include <qhw_admission/qhw_admission.h>
+
+qhw_adm_t *ctx = NULL;
 qhw_adm_baseline_t baseline = {
 	.struct_size = sizeof(baseline),
 	.qubit_count = 4,
@@ -135,7 +163,6 @@ qhw_adm_baseline_t baseline = {
 	.shots = 100,
 	.measurement_count = 2,
 };
-
 qhw_adm_device_profile_t profile = {
 	.struct_size = sizeof(profile),
 	.device_id = 7,
@@ -146,60 +173,47 @@ qhw_adm_device_profile_t profile = {
 	.one_q_gate_ns = 20,
 	.two_q_gate_ns = 100,
 	.measurement_ns = 1000,
-	.total_credits = 0,
+	.total_credits = 10,
+};
+qhw_adm_qtask_class_t task = {
+	.struct_size = sizeof(task),
+	.class_id = 11,
+	.count = 2,
+	.qubit_count = 4,
+	.depth = 12,
+	.one_q_gate_count = 20,
+	.two_q_gate_count = 10,
+	.shots = 100,
+	.measurement_count = 2,
+};
+qhw_adm_request_t request = {
+	.struct_size = sizeof(request),
+	.request_id = 42,
+	.device_id = 7,
+	.user_id = 1000,
+	.job_id = 2000,
+	.scope_id = 3,
+	.workload_kind = QHW_ADM_WORKLOAD_HYBRID_JOB,
+	.walltime_ns = 2000000000ULL,
+	.task_class_count = 1,
+	.task_classes = &task,
+};
+qhw_adm_decision_t decision = {
+	.struct_size = sizeof(decision),
 };
 
+if (qhw_adm_create(NULL, &ctx) != QHW_ADM_OK)
+	return 1;
 qhw_adm_register_device(ctx, &profile);
 qhw_adm_add_policy_path(ctx, "build/policies");
 qhw_adm_set_policy(ctx, profile.device_id, "credit", NULL, 0);
+qhw_adm_reserve(ctx, &request, &decision);
+qhw_adm_destroy(ctx);
 ```
 
-Set `profile.total_credits` to a nonzero value when the site wants an explicit
-credit budget.
+## YAML Configuration
 
-## Rate Policy Configuration
-
-The rate policy admits reservations against finite device throughput. The
-throughput unit is the baseline circuit. The policy grants one or more rate
-slices, where each slice reserves a portion of the device throughput during the
-configured accounting window.
-
-The rate budget can be configured explicitly or derived automatically. An
-explicit `device_rate` takes precedence.
-
-```text
-if device_rate != 0:
-  rate_capacity = device_rate
-else:
-  estimated_baseline_ns = estimator(device_profile, baseline_circuit)
-  rate_capacity = ceil(time_span_ns / estimated_baseline_ns)
-```
-
-For each request, the policy computes the quantum budget from walltime after
-subtracting classical runtime and overhead. The requested rate is then:
-
-```text
-rate_required =
-  ceil((baseline_units_required * time_span_ns) / quantum_budget_ns)
-```
-
-### Configurable Inputs
-
-| Input | C field or API | YAML key | Purpose |
-|---|---|---|---|
-| Explicit rate | `qhw_adm_device_profile_t.device_rate` | `rate.device_rate` | Overrides derived rate capacity when nonzero. |
-| Estimator | `qhw_adm_set_estimator()` | `estimator.name` | Computes baseline and request cost. |
-| Timing window | `qhw_adm_device_profile_t.time_span_ns` | `time_span_ns` | Accounting window used when deriving rate capacity. |
-| Device profile | `qhw_adm_register_device()` | `devices[]` | Supplies timing, limits, baseline shape, and concurrency target. |
-| Baseline circuit | `qhw_adm_device_profile_t.baseline` | `baseline` | Defines one rate unit. |
-| Target concurrency | `qhw_adm_device_profile_t.concurrent_jobs` | `rate.concurrent_jobs` | Computes the default rate slice when no explicit slice is provided. |
-| Rate slice | `QHW_ADM_OPT_RATE_SLICE` | `policy.options.rate_slice` | Minimum allocatable rate grant. |
-| Reservation TTL | `QHW_ADM_OPT_RATE_RESERVATION_TTL_NS` | `policy.options.rate_reservation_ttl_ns` | Optional policy-selected reservation lease duration. |
-
-### YAML Example
-
-This example derives rate capacity from `time_span_ns` because `device_rate` is
-zero.
+The same device and policy setup can be loaded from YAML:
 
 ```yaml
 plugin_paths:
@@ -223,19 +237,61 @@ devices:
       compile_ns: 1000
       control_overhead_ns: 200
       provider_overhead_ns: 300
-    rate:
-      device_rate: 0
-      concurrent_jobs: 2
+    credit:
+      total_credits: 10
     policy:
-      name: rate
-      options:
-        rate_slice: 2
+      name: credit
 ```
 
-This example overrides derived capacity:
+Load it from C:
 
-```yaml
-rate:
-  device_rate: 12
-  concurrent_jobs: 3
+```c
+qhw_adm_load_config(ctx, "admission.yaml", QHW_ADM_CONFIG_MERGE);
 ```
+
+Load it from Python:
+
+```python
+ctx.load_config("admission.yaml")
+```
+
+## Policies
+
+| Policy | Capacity model | Typical use |
+|---|---|---|
+| `unlimited` | Creates a reservation for every valid request. | Functional testing and deployments where another layer owns QoS. |
+| `credit` | Reserves finite baseline units. | Bounded admission for a shared QPU over an accounting window. |
+| `rate` | Reserves finite throughput slices. | Hybrid workloads that need throughput during a walltime window. |
+
+Credit capacity uses explicit `total_credits` when nonzero. Otherwise, it is
+derived from the configured baseline circuit and `time_span_ns`.
+
+Rate capacity uses explicit `device_rate` when nonzero. Otherwise, it is
+derived from the configured baseline circuit and `time_span_ns`.
+
+See [docs/policies.md](docs/policies.md) for policy details.
+
+## Usage Accounting Flow
+
+Admission accepts a job-level envelope. A controller then accounts for qtasks
+as they move through scheduling and device submission.
+
+```text
+reserve job
+authorize qtask usage
+schedule qtask
+consume qtask usage before device submission
+record actual usage after completion
+return unused usage on cancellation or partial execution
+release, cancel, renew, or expire the reservation
+```
+
+The scheduler remains responsible for task ordering. Admission tracks the
+reservation envelope and compliance state.
+
+## More Documentation
+
+- [docs/detailed-design.md](docs/detailed-design.md)
+- [docs/qhw-admission-standard.md](docs/qhw-admission-standard.md)
+- [docs/policies.md](docs/policies.md)
+- `man qhw_admission`

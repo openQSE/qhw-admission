@@ -1,0 +1,60 @@
+.TH QHW_ADM_POLICY 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_adm_load_policy, qhw_adm_add_policy_path,
+qhw_adm_set_policy \- load and select admission policies
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission.h>
+
+qhw_adm_rc_t qhw_adm_load_policy(
+	qhw_adm_t *ctx,
+	const char *path,
+	qhw_adm_policy_t **out_policy);
+
+qhw_adm_rc_t qhw_adm_add_policy_path(
+	qhw_adm_t *ctx,
+	const char *path);
+
+qhw_adm_rc_t qhw_adm_set_policy(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	const char *name,
+	const qhw_adm_kv_t *options,
+	size_t option_count);
+.fi
+.SH DESCRIPTION
+Policies are shared-object plugins. Loading a policy validates its exported
+.B qhw_adm_policy_plugin
+symbol and registers its name with the context.
+.PP
+.BR qhw_adm_add_policy_path ()
+adds a directory searched by
+.BR qhw_adm_set_policy ().
+.PP
+.BR qhw_adm_set_policy ()
+selects one policy for a registered device and initializes policy-private
+state with the supplied options.
+.SH STANDARD POLICIES
+.TP
+.B unlimited
+Accepts valid requests when the device is available.
+.TP
+.B credit
+Reserves finite baseline-unit credits.
+.TP
+.B rate
+Reserves finite throughput slices.
+.SH RETURN VALUES
+Policy functions return
+.B QHW_ADM_OK
+on success. Common failures include
+.B QHW_ADM_ERR_NOT_FOUND,
+.B QHW_ADM_ERR_EXISTS,
+.B QHW_ADM_ERR_POLICY,
+.B QHW_ADM_ERR_UNSUPPORTED,
+and
+.B QHW_ADM_ERR_STATE.
+.SH SEE ALSO
+.BR qhw_admission (3),
+.BR qhw_adm_reservation (3),
+.BR qhw_adm_types (3)

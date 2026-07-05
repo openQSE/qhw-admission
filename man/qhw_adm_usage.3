@@ -1,0 +1,70 @@
+.TH QHW_ADM_USAGE 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_adm_authorize_usage, qhw_adm_consume,
+qhw_adm_return_usage, qhw_adm_get_usage,
+qhw_adm_get_compliance, qhw_adm_record_actual \- account for qtask usage
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission.h>
+
+qhw_adm_rc_t qhw_adm_authorize_usage(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_usage_t *usage,
+	qhw_adm_decision_t *out_decision);
+
+qhw_adm_rc_t qhw_adm_consume(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_usage_t *usage,
+	qhw_adm_decision_t *out_decision);
+
+qhw_adm_rc_t qhw_adm_return_usage(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_usage_t *usage);
+
+qhw_adm_rc_t qhw_adm_get_usage(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	qhw_adm_usage_state_t *out_usage);
+
+qhw_adm_rc_t qhw_adm_get_compliance(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	qhw_adm_compliance_t *out_compliance);
+
+qhw_adm_rc_t qhw_adm_record_actual(
+	qhw_adm_t *ctx,
+	uint64_t reservation_id,
+	const qhw_adm_actual_usage_t *actual);
+.fi
+.SH DESCRIPTION
+.BR qhw_adm_authorize_usage ()
+checks a qtask against a reservation envelope without changing accounting
+state.
+.PP
+.BR qhw_adm_consume ()
+records estimated usage before device submission. Nonzero task IDs are
+idempotent. Repeating the same task ID with different usage returns a state
+error.
+.PP
+.BR qhw_adm_return_usage ()
+returns unused capacity after cancellation, failure, or partial execution.
+.PP
+.BR qhw_adm_record_actual ()
+records measured timing after completion and invokes estimator feedback when
+the selected estimator supports it.
+.PP
+Rate accounting uses
+.I qhw_adm_usage_t.event_time_ns
+to select the accounting window. A zero timestamp uses the context clock.
+.SH RETURN VALUES
+Usage functions return
+.B QHW_ADM_OK
+on success. Authorization and consume decisions are returned through
+.B qhw_adm_decision_t.
+.SH SEE ALSO
+.BR qhw_admission (3),
+.BR qhw_adm_reservation (3),
+.BR qhw_adm_types (3)

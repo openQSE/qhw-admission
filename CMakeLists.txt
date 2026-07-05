@@ -324,6 +324,18 @@ install(
     DIRECTORY include/qhw_admission
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
+install(
+    DIRECTORY docs/
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+    FILES_MATCHING
+        PATTERN "*.md")
+
+install(
+    DIRECTORY man/
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man3
+    FILES_MATCHING
+        PATTERN "*.3")
+
 if(QHW_ADM_BUILD_PLUGINS AND QHW_ADM_INSTALL_PLUGINS)
     install(
         TARGETS qhw_adm_unlimited

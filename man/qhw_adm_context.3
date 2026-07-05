@@ -1,0 +1,71 @@
+.TH QHW_ADM_CONTEXT 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_adm_create, qhw_adm_destroy, qhw_adm_last_error,
+qhw_adm_get_threading, qhw_adm_load_config,
+qhw_adm_load_config_string \- manage admission contexts
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission.h>
+
+qhw_adm_rc_t qhw_adm_create(
+	const qhw_adm_attr_t *attr,
+	qhw_adm_t **out_ctx);
+
+void qhw_adm_destroy(qhw_adm_t *ctx);
+
+const char *qhw_adm_last_error(const qhw_adm_t *ctx);
+
+qhw_adm_rc_t qhw_adm_get_threading(
+	qhw_adm_t *ctx,
+	qhw_adm_threading_t *out_threading);
+
+qhw_adm_rc_t qhw_adm_load_config(
+	qhw_adm_t *ctx,
+	const char *path,
+	uint64_t flags);
+
+qhw_adm_rc_t qhw_adm_load_config_string(
+	qhw_adm_t *ctx,
+	const char *yaml_text,
+	size_t yaml_len,
+	uint64_t flags);
+.fi
+.SH DESCRIPTION
+.BR qhw_adm_create ()
+creates an admission context. The context owns registered devices, policies,
+estimators, reservations, capacity accounting, diagnostics, and output views.
+.PP
+.I attr
+may be NULL. A null attribute selects
+.B QHW_ADM_THREAD_USER.
+.PP
+.BR qhw_adm_destroy ()
+releases all context-owned state. Passing NULL is allowed.
+.PP
+.BR qhw_adm_last_error ()
+returns the current diagnostic string. The returned pointer is owned by the
+context.
+.PP
+.BR qhw_adm_get_threading ()
+returns the context threading mode.
+.PP
+.BR qhw_adm_load_config ()
+and
+.BR qhw_adm_load_config_string ()
+load YAML configuration. The flags argument must select either
+.B QHW_ADM_CONFIG_MERGE
+or
+.B QHW_ADM_CONFIG_REPLACE.
+.SH RETURN VALUES
+Context functions return
+.B QHW_ADM_OK
+on success. Common failures include
+.B QHW_ADM_ERR_INVAL,
+.B QHW_ADM_ERR_NOMEM,
+.B QHW_ADM_ERR_STATE,
+and
+.B QHW_ADM_ERR_NOT_FOUND.
+.SH SEE ALSO
+.BR qhw_admission (3),
+.BR qhw_adm_device (3),
+.BR qhw_adm_policy (3)

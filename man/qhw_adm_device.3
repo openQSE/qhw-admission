@@ -1,0 +1,89 @@
+.TH QHW_ADM_DEVICE 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_adm_register_device, qhw_adm_unregister_device,
+qhw_adm_get_device, qhw_adm_set_baseline,
+qhw_adm_set_estimator, qhw_adm_load_estimator,
+qhw_adm_add_estimator_path, qhw_adm_set_capacity_provider,
+qhw_adm_get_capacity, qhw_adm_estimate_qtask_class,
+qhw_adm_estimate_baseline \- configure devices and estimators
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission.h>
+
+qhw_adm_rc_t qhw_adm_register_device(
+	qhw_adm_t *ctx,
+	const qhw_adm_device_profile_t *profile);
+
+qhw_adm_rc_t qhw_adm_unregister_device(
+	qhw_adm_t *ctx,
+	uint64_t device_id);
+
+qhw_adm_rc_t qhw_adm_get_device(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	qhw_adm_device_profile_t *out_profile);
+
+qhw_adm_rc_t qhw_adm_set_baseline(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	const qhw_adm_baseline_t *baseline);
+
+qhw_adm_rc_t qhw_adm_set_estimator(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	const char *name,
+	const qhw_adm_kv_t *options,
+	size_t option_count);
+
+qhw_adm_rc_t qhw_adm_load_estimator(
+	qhw_adm_t *ctx,
+	const char *path,
+	qhw_adm_estimator_t **out_estimator);
+
+qhw_adm_rc_t qhw_adm_add_estimator_path(
+	qhw_adm_t *ctx,
+	const char *path);
+
+qhw_adm_rc_t qhw_adm_set_capacity_provider(
+	qhw_adm_t *ctx,
+	const qhw_adm_capacity_provider_t *provider);
+
+qhw_adm_rc_t qhw_adm_get_capacity(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	uint64_t scope_id,
+	qhw_adm_capacity_view_t *out_capacity);
+
+qhw_adm_rc_t qhw_adm_estimate_qtask_class(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	const qhw_adm_qtask_class_t *task_class,
+	qhw_adm_estimate_t *out_estimate);
+
+qhw_adm_rc_t qhw_adm_estimate_baseline(
+	qhw_adm_t *ctx,
+	uint64_t device_id,
+	qhw_adm_estimate_t *out_estimate);
+.fi
+.SH DESCRIPTION
+Device profiles describe the managed resource. They include the device ID,
+baseline circuit, timing fields, credit and rate capacity, shot limits, and
+policy defaults.
+.PP
+Estimators convert qtask classes and requests into timing and baseline-unit
+estimates. The built-in baseline estimator uses the timing fields in the
+registered device profile.
+.PP
+The capacity provider callback lets a controller supply live availability,
+queue, and scope-cap information before policy evaluation.
+.SH RETURN VALUES
+These functions return
+.B QHW_ADM_OK
+on success. Profile, estimator, and capacity errors return a nonzero
+.B qhw_adm_rc_t
+and update the context diagnostic string.
+.SH SEE ALSO
+.BR qhw_admission (3),
+.BR qhw_adm_policy (3),
+.BR qhw_adm_reservation (3),
+.BR qhw_adm_types (3)

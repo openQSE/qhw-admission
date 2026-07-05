@@ -1,0 +1,58 @@
+.TH QHW_ADMISSION 3 "2026-07-05" "qhw-admission" "qhw-admission manual"
+.SH NAME
+qhw_admission \- admission-control library for managed quantum resources
+.SH SYNOPSIS
+.nf
+#include <qhw_admission/qhw_admission.h>
+.fi
+.SH DESCRIPTION
+.B qhw-admission
+evaluates job-level requests for managed quantum devices. A caller creates an
+admission context, registers one or more device profiles, selects an estimator
+and admission policy for each device, and evaluates or reserves capacity.
+.PP
+Accepted reservations form a bounded usage envelope. A controller can authorize
+qtask usage, consume estimated usage before device submission, return unused
+usage, and record measured usage after completion.
+.PP
+The standard policies are:
+.TP
+.B unlimited
+Accepts internally valid requests when the device is available.
+.TP
+.B credit
+Reserves finite baseline units.
+.TP
+.B rate
+Reserves finite throughput slices over an accounting window.
+.SH BASIC FLOW
+.nf
+qhw_adm_create(NULL, &ctx);
+qhw_adm_register_device(ctx, &profile);
+qhw_adm_add_policy_path(ctx, "build/policies");
+qhw_adm_set_policy(ctx, profile.device_id, "credit", NULL, 0);
+qhw_adm_reserve(ctx, &request, &decision);
+qhw_adm_consume(ctx, decision.reservation_id, &usage, &decision);
+qhw_adm_record_actual(ctx, decision.reservation_id, &actual);
+qhw_adm_release(ctx, decision.reservation_id, QHW_ADM_REASON_NONE);
+qhw_adm_destroy(ctx);
+.fi
+.SH THREADING
+Contexts are created in either
+.B QHW_ADM_THREAD_USER
+or
+.B QHW_ADM_THREAD_SAFE
+mode. User-threaded mode expects the caller to serialize access. Thread-safe
+mode protects context-owned state.
+.SH RETURN VALUES
+Most functions return
+.B qhw_adm_rc_t.
+Successful calls return
+.B QHW_ADM_OK.
+.SH SEE ALSO
+.BR qhw_adm_context (3),
+.BR qhw_adm_device (3),
+.BR qhw_adm_policy (3),
+.BR qhw_adm_reservation (3),
+.BR qhw_adm_usage (3),
+.BR qhw_adm_types (3)
