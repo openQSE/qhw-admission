@@ -187,6 +187,7 @@ typedef struct qhw_adm_device_profile {
 	qhw_adm_baseline_t baseline;
 	uint32_t max_qubits;
 	uint64_t max_shots;
+	uint32_t max_provider_queue_depth;
 	uint64_t one_q_gate_ns;
 	uint64_t two_q_gate_ns;
 	uint64_t measurement_ns;

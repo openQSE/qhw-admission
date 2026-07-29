@@ -228,6 +228,7 @@ class DeviceProfile:
         device_rate=0,
         concurrent_jobs=0,
         default_ttl_ns=0,
+        max_provider_queue_depth=0,
     ):
         self._native = _native.qhw_adm_device_profile_t()
         self._native.struct_size = _native.qhw_adm_device_profile_sizeof()
@@ -236,6 +237,7 @@ class DeviceProfile:
         self._native.baseline = baseline._native
         self._native.max_qubits = max_qubits
         self._native.max_shots = max_shots
+        self._native.max_provider_queue_depth = max_provider_queue_depth
         self._native.one_q_gate_ns = one_q_gate_ns
         self._native.two_q_gate_ns = two_q_gate_ns
         self._native.measurement_ns = measurement_ns
@@ -270,6 +272,7 @@ class DeviceProfileView:
         self.baseline = BaselineView(native.baseline)
         self.max_qubits = native.max_qubits
         self.max_shots = native.max_shots
+        self.max_provider_queue_depth = native.max_provider_queue_depth
         self.one_q_gate_ns = native.one_q_gate_ns
         self.two_q_gate_ns = native.two_q_gate_ns
         self.measurement_ns = native.measurement_ns
