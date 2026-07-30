@@ -35,6 +35,29 @@ RESERVATION_RELEASED = _native.QHW_ADM_RESERVATION_RELEASED
 RESERVATION_EXPIRED = _native.QHW_ADM_RESERVATION_EXPIRED
 RESERVATION_CANCELLED = _native.QHW_ADM_RESERVATION_CANCELLED
 
+RESERVATION_FILTER_DEVICE_ID = (
+    _native.QHW_ADM_RESERVATION_FILTER_DEVICE_ID
+)
+RESERVATION_FILTER_SCOPE_ID = _native.QHW_ADM_RESERVATION_FILTER_SCOPE_ID
+RESERVATION_FILTER_USER_ID = _native.QHW_ADM_RESERVATION_FILTER_USER_ID
+RESERVATION_FILTER_JOB_ID = _native.QHW_ADM_RESERVATION_FILTER_JOB_ID
+RESERVATION_FILTER_STATE = _native.QHW_ADM_RESERVATION_FILTER_STATE
+RESERVATION_FILTER_WORKLOAD_KIND = (
+    _native.QHW_ADM_RESERVATION_FILTER_WORKLOAD_KIND
+)
+RESERVATION_FILTER_CREATED_AFTER = (
+    _native.QHW_ADM_RESERVATION_FILTER_CREATED_AFTER
+)
+RESERVATION_FILTER_CREATED_BEFORE = (
+    _native.QHW_ADM_RESERVATION_FILTER_CREATED_BEFORE
+)
+RESERVATION_FILTER_EXPIRES_AFTER = (
+    _native.QHW_ADM_RESERVATION_FILTER_EXPIRES_AFTER
+)
+RESERVATION_FILTER_EXPIRES_BEFORE = (
+    _native.QHW_ADM_RESERVATION_FILTER_EXPIRES_BEFORE
+)
+
 REASON_NONE = _native.QHW_ADM_REASON_NONE
 REASON_ACCEPTED = _native.QHW_ADM_REASON_ACCEPTED
 REASON_DEVICE_NOT_FOUND = _native.QHW_ADM_REASON_DEVICE_NOT_FOUND
@@ -717,6 +740,103 @@ class AdmissionContext:
         self._check_rc(rc, "qhw_adm_get_reservation")
         return Reservation(reservation)
 
+    def list_reservations(
+        self,
+        device_id=None,
+        scope_id=None,
+        user_id=None,
+        job_id=None,
+        state=None,
+        workload_kind=None,
+        created_after_ns=None,
+        created_before_ns=None,
+        expires_after_ns=None,
+        expires_before_ns=None,
+        offset=0,
+        limit=None,
+    ):
+        self._require_open()
+        if offset < 0 or (limit is not None and limit < 0):
+            raise AdmissionError("reservation list offset and limit must be >= 0")
+
+        reservation_filter = _native.qhw_adm_reservation_filter_t()
+        reservation_filter.struct_size = (
+            _native.qhw_adm_reservation_filter_sizeof()
+        )
+        reservation_filter.flags = 0
+
+        filters = (
+            (device_id, RESERVATION_FILTER_DEVICE_ID, "device_id"),
+            (scope_id, RESERVATION_FILTER_SCOPE_ID, "scope_id"),
+            (user_id, RESERVATION_FILTER_USER_ID, "user_id"),
+            (job_id, RESERVATION_FILTER_JOB_ID, "job_id"),
+            (state, RESERVATION_FILTER_STATE, "state"),
+            (workload_kind, RESERVATION_FILTER_WORKLOAD_KIND, "workload_kind"),
+            (
+                created_after_ns,
+                RESERVATION_FILTER_CREATED_AFTER,
+                "created_after_ns",
+            ),
+            (
+                created_before_ns,
+                RESERVATION_FILTER_CREATED_BEFORE,
+                "created_before_ns",
+            ),
+            (
+                expires_after_ns,
+                RESERVATION_FILTER_EXPIRES_AFTER,
+                "expires_after_ns",
+            ),
+            (
+                expires_before_ns,
+                RESERVATION_FILTER_EXPIRES_BEFORE,
+                "expires_before_ns",
+            ),
+        )
+        for value, flag, field in filters:
+            if value is not None:
+                reservation_filter.flags |= flag
+                setattr(reservation_filter, field, value)
+
+        total = _native.qhw_adm_py_count_reservations(
+            self._ctx,
+            reservation_filter,
+        )
+        if total < 0:
+            self._raise_list_error()
+        if offset >= total or limit == 0:
+            return []
+
+        capacity = total - offset
+        if limit is not None:
+            capacity = min(capacity, limit)
+
+        reservations = _native.qhw_adm_py_reservation_array_create(capacity)
+        if reservations is None:
+            raise AdmissionError("failed to allocate reservation list")
+        try:
+            count = _native.qhw_adm_py_list_reservations(
+                self._ctx,
+                reservation_filter,
+                offset,
+                reservations,
+                capacity,
+            )
+            if count < 0:
+                self._raise_list_error()
+            return [
+                Reservation(
+                    _native.qhw_adm_py_reservation_array_get(
+                        reservations,
+                        count,
+                        index,
+                    )
+                )
+                for index in range(count)
+            ]
+        finally:
+            _native.qhw_adm_py_reservation_array_destroy(reservations)
+
     def get_capacity(self, device_id, scope_id=0):
         self._require_open()
         capacity = _native.qhw_adm_capacity_view_t()
@@ -840,6 +960,12 @@ class AdmissionContext:
                 raise AdmissionError(f"{api} failed: {detail}")
             raise AdmissionError(f"{api} failed with rc={rc}")
 
+    def _raise_list_error(self):
+        detail = self.last_error
+        if detail:
+            raise AdmissionError(f"qhw_adm_list_reservations failed: {detail}")
+        raise AdmissionError("qhw_adm_list_reservations failed")
+
 
 __all__ = [
     "AdmissionContext",
@@ -891,6 +1017,16 @@ __all__ = [
     "RESERVATION_ACTIVE",
     "RESERVATION_CANCELLED",
     "RESERVATION_EXPIRED",
+    "RESERVATION_FILTER_CREATED_AFTER",
+    "RESERVATION_FILTER_CREATED_BEFORE",
+    "RESERVATION_FILTER_DEVICE_ID",
+    "RESERVATION_FILTER_EXPIRES_AFTER",
+    "RESERVATION_FILTER_EXPIRES_BEFORE",
+    "RESERVATION_FILTER_JOB_ID",
+    "RESERVATION_FILTER_SCOPE_ID",
+    "RESERVATION_FILTER_STATE",
+    "RESERVATION_FILTER_USER_ID",
+    "RESERVATION_FILTER_WORKLOAD_KIND",
     "RESERVATION_PENDING",
     "RESERVATION_RELEASED",
     "Reservation",
