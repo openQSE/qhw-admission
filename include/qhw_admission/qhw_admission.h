@@ -116,6 +116,15 @@ qhw_adm_rc_t qhw_adm_get_reservation(
 	uint64_t reservation_id,
 	qhw_adm_reservation_t *out_reservation);
 
+qhw_adm_rc_t qhw_adm_list_reservations(
+	qhw_adm_t *ctx,
+	const qhw_adm_reservation_filter_t *filter,
+	size_t offset,
+	qhw_adm_reservation_t *out_reservations,
+	size_t reservation_capacity,
+	size_t *out_count,
+	size_t *out_total);
+
 qhw_adm_rc_t qhw_adm_release(
 	qhw_adm_t *ctx,
 	uint64_t reservation_id,

@@ -187,6 +187,7 @@ typedef struct qhw_adm_device_profile {
 	qhw_adm_baseline_t baseline;
 	uint32_t max_qubits;
 	uint64_t max_shots;
+	uint32_t max_provider_queue_depth;
 	uint64_t one_q_gate_ns;
 	uint64_t two_q_gate_ns;
 	uint64_t measurement_ns;
@@ -365,6 +366,34 @@ typedef struct qhw_adm_reservation {
 	const qhw_adm_kv_t *metadata;
 	size_t metadata_count;
 } qhw_adm_reservation_t;
+
+typedef enum qhw_adm_reservation_filter_flag {
+	QHW_ADM_RESERVATION_FILTER_DEVICE_ID = 1U << 0,
+	QHW_ADM_RESERVATION_FILTER_SCOPE_ID = 1U << 1,
+	QHW_ADM_RESERVATION_FILTER_USER_ID = 1U << 2,
+	QHW_ADM_RESERVATION_FILTER_JOB_ID = 1U << 3,
+	QHW_ADM_RESERVATION_FILTER_STATE = 1U << 4,
+	QHW_ADM_RESERVATION_FILTER_WORKLOAD_KIND = 1U << 5,
+	QHW_ADM_RESERVATION_FILTER_CREATED_AFTER = 1U << 6,
+	QHW_ADM_RESERVATION_FILTER_CREATED_BEFORE = 1U << 7,
+	QHW_ADM_RESERVATION_FILTER_EXPIRES_AFTER = 1U << 8,
+	QHW_ADM_RESERVATION_FILTER_EXPIRES_BEFORE = 1U << 9
+} qhw_adm_reservation_filter_flag_t;
+
+typedef struct qhw_adm_reservation_filter {
+	size_t struct_size;
+	uint64_t flags;
+	uint64_t device_id;
+	uint64_t scope_id;
+	uint64_t user_id;
+	uint64_t job_id;
+	qhw_adm_reservation_state_t state;
+	qhw_adm_workload_kind_t workload_kind;
+	uint64_t created_after_ns;
+	uint64_t created_before_ns;
+	uint64_t expires_after_ns;
+	uint64_t expires_before_ns;
+} qhw_adm_reservation_filter_t;
 
 typedef struct qhw_adm_usage {
 	size_t struct_size;

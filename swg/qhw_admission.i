@@ -61,6 +61,11 @@ static size_t qhw_adm_reservation_sizeof(void)
 	return sizeof(qhw_adm_reservation_t);
 }
 
+static size_t qhw_adm_reservation_filter_sizeof(void)
+{
+	return sizeof(qhw_adm_reservation_filter_t);
+}
+
 static size_t qhw_adm_usage_sizeof(void)
 {
 	return sizeof(qhw_adm_usage_t);
@@ -306,5 +311,90 @@ static int64_t qhw_adm_py_expire(qhw_adm_t *ctx, uint64_t now_ns)
 	}
 
 	return (int64_t)expired_count;
+}
+
+static qhw_adm_reservation_t *qhw_adm_py_reservation_array_create(
+	size_t count)
+{
+	qhw_adm_reservation_t *reservations;
+	size_t i;
+
+	if (count == 0) {
+		return NULL;
+	}
+
+	reservations = calloc(count, sizeof(*reservations));
+	if (reservations == NULL) {
+		return NULL;
+	}
+	for (i = 0; i < count; i++) {
+		reservations[i].struct_size = sizeof(reservations[i]);
+	}
+	return reservations;
+}
+
+static void qhw_adm_py_reservation_array_destroy(
+	qhw_adm_reservation_t *reservations)
+{
+	free(reservations);
+}
+
+static const qhw_adm_reservation_t *qhw_adm_py_reservation_array_get(
+	const qhw_adm_reservation_t *reservations,
+	size_t count,
+	size_t index)
+{
+	if (reservations == NULL || index >= count) {
+		return NULL;
+	}
+
+	return &reservations[index];
+}
+
+static int64_t qhw_adm_py_count_reservations(
+	qhw_adm_t *ctx,
+	const qhw_adm_reservation_filter_t *filter)
+{
+	size_t count = 0;
+	size_t total = 0;
+
+	if (qhw_adm_list_reservations(
+		    ctx,
+		    filter,
+		    0,
+		    NULL,
+		    0,
+		    &count,
+		    &total) != QHW_ADM_OK ||
+	    total > INT64_MAX) {
+		return -1;
+	}
+
+	return (int64_t)total;
+}
+
+static int64_t qhw_adm_py_list_reservations(
+	qhw_adm_t *ctx,
+	const qhw_adm_reservation_filter_t *filter,
+	size_t offset,
+	qhw_adm_reservation_t *out_reservations,
+	size_t reservation_capacity)
+{
+	size_t count = 0;
+	size_t total = 0;
+
+	if (qhw_adm_list_reservations(
+		    ctx,
+		    filter,
+		    offset,
+		    out_reservations,
+		    reservation_capacity,
+		    &count,
+		    &total) != QHW_ADM_OK ||
+	    count > INT64_MAX) {
+		return -1;
+	}
+
+	return (int64_t)count;
 }
 %}

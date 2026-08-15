@@ -114,6 +114,70 @@ class UnlimitedPolicyTests(unittest.TestCase):
             reservation = ctx.get_reservation(decision.reservation_id)
             self.assertEqual(reservation.state, RESERVATION_RELEASED)
 
+    def test_list_reservations(self):
+        task = make_task()
+
+        with self.setup_context() as ctx:
+            first = ctx.reserve(make_request(task))
+
+            second_request = make_request(task, request_id=43)
+            second_request._native.user_id = 1001
+            second = ctx.reserve(second_request)
+
+            third_request = make_request(task, request_id=44)
+            third_request._native.job_id = 3000
+            third_request._native.scope_id = 4
+            third = ctx.reserve(third_request)
+
+            ctx.release(first.reservation_id)
+            ctx.cancel(second.reservation_id)
+
+            reservations = ctx.list_reservations()
+            self.assertEqual(
+                [item.reservation_id for item in reservations],
+                [
+                    first.reservation_id,
+                    second.reservation_id,
+                    third.reservation_id,
+                ],
+            )
+            self.assertEqual(
+                [item.state for item in reservations],
+                [
+                    RESERVATION_RELEASED,
+                    RESERVATION_CANCELLED,
+                    RESERVATION_ACTIVE,
+                ],
+            )
+
+            reservations = ctx.list_reservations(state=RESERVATION_ACTIVE)
+            self.assertEqual(
+                [item.reservation_id for item in reservations],
+                [third.reservation_id],
+            )
+
+            reservations = ctx.list_reservations(user_id=1000)
+            self.assertEqual(
+                [item.reservation_id for item in reservations],
+                [first.reservation_id, third.reservation_id],
+            )
+
+            reservations = ctx.list_reservations(scope_id=4)
+            self.assertEqual(
+                [item.reservation_id for item in reservations],
+                [third.reservation_id],
+            )
+
+            reservations = ctx.list_reservations(offset=1, limit=1)
+            self.assertEqual(
+                [item.reservation_id for item in reservations],
+                [second.reservation_id],
+            )
+
+            self.assertEqual(ctx.list_reservations(limit=0), [])
+            with self.assertRaises(AdmissionError):
+                ctx.list_reservations(offset=-1)
+
     def test_cancel_and_expire(self):
         task = make_task()
 
