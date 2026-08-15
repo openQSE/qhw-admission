@@ -15,3 +15,4 @@ wheel.packages = ["python/qhw_admission"]
 QHW_ADM_BUILD_TESTS = "OFF"
 QHW_ADM_BUILD_PYTHON = "ON"
 QHW_ADM_INSTALL_PYTHON_ARTIFACTS = "ON"
+QHW_ADM_PYTHON_INSTALL_DIR = "."

@@ -13,7 +13,7 @@ option(QHW_ADM_INSTALL_PLUGINS "Install standard policy plugins" ON)
 option(QHW_ADM_INSTALL_PYTHON_ARTIFACTS
     "Install native artifacts into the Python package"
     OFF)
-set(QHW_ADM_PYTHON_INSTALL_DIR "" CACHE PATH
+set(QHW_ADM_PYTHON_INSTALL_DIR "" CACHE STRING
     "Python package install directory relative to CMAKE_INSTALL_PREFIX")
 
 set(QHW_ADM_DATASTRUCTURES_DIR
