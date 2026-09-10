@@ -13,6 +13,8 @@ option(QHW_ADM_INSTALL_PLUGINS "Install standard policy plugins" ON)
 option(QHW_ADM_INSTALL_PYTHON_ARTIFACTS
     "Install native artifacts into the Python package"
     OFF)
+set(QHW_ADM_PYTHON_INSTALL_DIR "" CACHE STRING
+    "Python package install directory relative to CMAKE_INSTALL_PREFIX")
 
 set(QHW_ADM_DATASTRUCTURES_DIR
     ${CMAKE_CURRENT_SOURCE_DIR}/external/qhw-datastructures
@@ -353,23 +355,14 @@ install(
     NAMESPACE qhw_admission::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/qhw_admission)
 
-if(QHW_ADM_INSTALL_PYTHON_ARTIFACTS)
-    install(
-        TARGETS qhw_admission
-        LIBRARY DESTINATION qhw_admission/native
-        ARCHIVE DESTINATION qhw_admission/native
-        RUNTIME DESTINATION qhw_admission/native)
-    install(
-        TARGETS qhw_datastructures
-        LIBRARY DESTINATION qhw_admission/native
-        ARCHIVE DESTINATION qhw_admission/native
-        RUNTIME DESTINATION qhw_admission/native)
-endif()
-
 if(QHW_ADM_BUILD_PYTHON)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     find_package(SWIG REQUIRED)
     find_package(Python3 COMPONENTS Development.Module REQUIRED)
+    if(QHW_ADM_PYTHON_INSTALL_DIR STREQUAL "")
+        set(QHW_ADM_PYTHON_INSTALL_DIR
+            "${CMAKE_INSTALL_LIBDIR}/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages")
+    endif()
 
     set(QHW_ADM_PYTHON_BUILD_DIR
         ${CMAKE_CURRENT_BINARY_DIR}/python/qhw_admission)
@@ -459,11 +452,9 @@ if(QHW_ADM_BUILD_PYTHON)
 
     if(QHW_ADM_INSTALL_PYTHON_ARTIFACTS)
         install(
-            TARGETS _qhw_admission_c
-            LIBRARY DESTINATION qhw_admission)
-        install(
-            FILES ${QHW_ADM_SWIG_PY}
-            DESTINATION qhw_admission)
+            DIRECTORY ${QHW_ADM_PYTHON_BUILD_DIR}/
+            DESTINATION ${QHW_ADM_PYTHON_INSTALL_DIR}/qhw_admission
+            PATTERN "__pycache__" EXCLUDE)
     endif()
 endif()
 

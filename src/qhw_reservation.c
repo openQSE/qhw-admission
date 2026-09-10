@@ -25,6 +25,155 @@ static qhw_adm_rc_t validate_reservation_output(
 	return QHW_ADM_OK;
 }
 
+static int reservation_state_valid(qhw_adm_reservation_state_t state)
+{
+	return state == QHW_ADM_RESERVATION_PENDING ||
+		state == QHW_ADM_RESERVATION_ACTIVE ||
+		state == QHW_ADM_RESERVATION_RELEASED ||
+		state == QHW_ADM_RESERVATION_EXPIRED ||
+		state == QHW_ADM_RESERVATION_CANCELLED;
+}
+
+static int workload_kind_valid(qhw_adm_workload_kind_t kind)
+{
+	return kind == QHW_ADM_WORKLOAD_QUANTUM_JOB ||
+		kind == QHW_ADM_WORKLOAD_HYBRID_JOB;
+}
+
+#define QHW_ADM_RESERVATION_FILTER_KNOWN \
+	(QHW_ADM_RESERVATION_FILTER_DEVICE_ID | \
+	 QHW_ADM_RESERVATION_FILTER_SCOPE_ID | \
+	 QHW_ADM_RESERVATION_FILTER_USER_ID | \
+	 QHW_ADM_RESERVATION_FILTER_JOB_ID | \
+	 QHW_ADM_RESERVATION_FILTER_STATE | \
+	 QHW_ADM_RESERVATION_FILTER_WORKLOAD_KIND | \
+	 QHW_ADM_RESERVATION_FILTER_CREATED_AFTER | \
+	 QHW_ADM_RESERVATION_FILTER_CREATED_BEFORE | \
+	 QHW_ADM_RESERVATION_FILTER_EXPIRES_AFTER | \
+	 QHW_ADM_RESERVATION_FILTER_EXPIRES_BEFORE)
+
+static qhw_adm_rc_t validate_reservation_filter(
+	const qhw_adm_reservation_filter_t *filter)
+{
+	if (filter == NULL) {
+		return QHW_ADM_OK;
+	}
+	if (filter->struct_size < sizeof(*filter) ||
+	    (filter->flags & ~QHW_ADM_RESERVATION_FILTER_KNOWN) != 0) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((filter->flags & QHW_ADM_RESERVATION_FILTER_STATE) != 0 &&
+	    !reservation_state_valid(filter->state)) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((filter->flags & QHW_ADM_RESERVATION_FILTER_WORKLOAD_KIND) != 0 &&
+	    !workload_kind_valid(filter->workload_kind)) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((filter->flags & QHW_ADM_RESERVATION_FILTER_CREATED_AFTER) != 0 &&
+	    (filter->flags & QHW_ADM_RESERVATION_FILTER_CREATED_BEFORE) != 0 &&
+	    filter->created_after_ns > filter->created_before_ns) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	if ((filter->flags & QHW_ADM_RESERVATION_FILTER_EXPIRES_AFTER) != 0 &&
+	    (filter->flags & QHW_ADM_RESERVATION_FILTER_EXPIRES_BEFORE) != 0 &&
+	    filter->expires_after_ns > filter->expires_before_ns) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	return QHW_ADM_OK;
+}
+
+static qhw_adm_rc_t validate_reservation_list_output(
+	qhw_adm_reservation_t *out_reservations,
+	size_t reservation_capacity)
+{
+	size_t i;
+
+	if (reservation_capacity == 0) {
+		return QHW_ADM_OK;
+	}
+	if (out_reservations == NULL) {
+		return QHW_ADM_ERR_INVAL;
+	}
+	for (i = 0; i < reservation_capacity; i++) {
+		if (validate_reservation_output(&out_reservations[i]) !=
+		    QHW_ADM_OK) {
+			return QHW_ADM_ERR_INVAL;
+		}
+	}
+	return QHW_ADM_OK;
+}
+
+static int reservation_matches_filter(
+	const qhw_adm_reservation_t *reservation,
+	const qhw_adm_reservation_filter_t *filter)
+{
+	uint64_t flags;
+
+	if (filter == NULL || filter->flags == 0) {
+		return 1;
+	}
+
+	flags = filter->flags;
+	if ((flags & QHW_ADM_RESERVATION_FILTER_DEVICE_ID) != 0 &&
+	    reservation->device_id != filter->device_id) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_SCOPE_ID) != 0 &&
+	    reservation->scope_id != filter->scope_id) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_USER_ID) != 0 &&
+	    reservation->user_id != filter->user_id) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_JOB_ID) != 0 &&
+	    reservation->job_id != filter->job_id) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_STATE) != 0 &&
+	    reservation->state != filter->state) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_WORKLOAD_KIND) != 0 &&
+	    reservation->workload_kind != filter->workload_kind) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_CREATED_AFTER) != 0 &&
+	    reservation->created_at_ns < filter->created_after_ns) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_CREATED_BEFORE) != 0 &&
+	    reservation->created_at_ns > filter->created_before_ns) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_EXPIRES_AFTER) != 0 &&
+	    reservation->expires_at_ns < filter->expires_after_ns) {
+		return 0;
+	}
+	if ((flags & QHW_ADM_RESERVATION_FILTER_EXPIRES_BEFORE) != 0 &&
+	    reservation->expires_at_ns > filter->expires_before_ns) {
+		return 0;
+	}
+	return 1;
+}
+
+static int compare_reservation_ptrs(const void *left, const void *right)
+{
+	const qhw_adm_reservation_t *const *left_res = left;
+	const qhw_adm_reservation_t *const *right_res = right;
+	uint64_t left_id = (*left_res)->reservation_id;
+	uint64_t right_id = (*right_res)->reservation_id;
+
+	if (left_id < right_id) {
+		return -1;
+	}
+	if (left_id > right_id) {
+		return 1;
+	}
+	return 0;
+}
+
 static qhw_adm_rc_t validate_capacity_output(
 	const qhw_adm_capacity_view_t *out_capacity)
 {
@@ -1191,6 +1340,103 @@ qhw_adm_rc_t qhw_adm_get_reservation(
 	}
 
 	*out_reservation = entry->reservation;
+	qhw_adm_clear_error(ctx);
+	qhw_adm_unlock(ctx);
+	return QHW_ADM_OK;
+}
+
+qhw_adm_rc_t qhw_adm_list_reservations(
+	qhw_adm_t *ctx,
+	const qhw_adm_reservation_filter_t *filter,
+	size_t offset,
+	qhw_adm_reservation_t *out_reservations,
+	size_t reservation_capacity,
+	size_t *out_count,
+	size_t *out_total)
+{
+	const qhw_adm_reservation_t **matches = NULL;
+	qhw_adm_rc_t rc;
+	size_t match_count = 0;
+	size_t copied = 0;
+	size_t i;
+
+	if (ctx == NULL || out_count == NULL || out_total == NULL ||
+	    validate_reservation_filter(filter) != QHW_ADM_OK ||
+	    validate_reservation_list_output(
+		    out_reservations,
+		    reservation_capacity) != QHW_ADM_OK) {
+		return QHW_ADM_ERR_INVAL;
+	}
+
+	*out_count = 0;
+	*out_total = 0;
+	rc = qhw_adm_lock(ctx);
+	if (rc != QHW_ADM_OK) {
+		return rc;
+	}
+
+	for (i = 0; i < ctx->reservations.bucket_count; i++) {
+		struct qhw_hash_entry *hash_entry;
+
+		hash_entry = ctx->reservations.buckets[i];
+		while (hash_entry != NULL) {
+			struct qhw_adm_reservation_entry *entry;
+
+			entry = hash_entry->value;
+			hash_entry = hash_entry->next;
+			if (reservation_matches_filter(
+				    &entry->reservation,
+				    filter)) {
+				match_count++;
+			}
+		}
+	}
+
+	if (match_count > 0) {
+		size_t next = 0;
+
+		matches = calloc(match_count, sizeof(*matches));
+		if (matches == NULL) {
+			qhw_adm_set_error(ctx, "failed to list reservations");
+			qhw_adm_unlock(ctx);
+			return QHW_ADM_ERR_NOMEM;
+		}
+
+		for (i = 0; i < ctx->reservations.bucket_count; i++) {
+			struct qhw_hash_entry *hash_entry;
+
+			hash_entry = ctx->reservations.buckets[i];
+			while (hash_entry != NULL) {
+				struct qhw_adm_reservation_entry *entry;
+
+				entry = hash_entry->value;
+				hash_entry = hash_entry->next;
+				if (reservation_matches_filter(
+					    &entry->reservation,
+					    filter)) {
+					matches[next++] = &entry->reservation;
+				}
+			}
+		}
+		qsort(
+			matches,
+			match_count,
+			sizeof(*matches),
+			compare_reservation_ptrs);
+	}
+
+	*out_total = match_count;
+	if (offset < match_count && reservation_capacity > 0) {
+		for (i = offset; i < match_count; i++) {
+			if (copied == reservation_capacity) {
+				break;
+			}
+			out_reservations[copied++] = *matches[i];
+		}
+	}
+	*out_count = copied;
+
+	free(matches);
 	qhw_adm_clear_error(ctx);
 	qhw_adm_unlock(ctx);
 	return QHW_ADM_OK;

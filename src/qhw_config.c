@@ -375,6 +375,9 @@ static qhw_adm_rc_t parse_device_top_field(
 	if (strcmp(key, "max_shots") == 0) {
 		return parse_u64(value, &profile->max_shots);
 	}
+	if (strcmp(key, "max_provider_queue_depth") == 0) {
+		return parse_u32(value, &profile->max_provider_queue_depth);
+	}
 	if (strcmp(key, "default_ttl_ns") == 0) {
 		return parse_u64(value, &profile->default_ttl_ns);
 	}

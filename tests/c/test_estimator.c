@@ -37,6 +37,7 @@ static qhw_adm_device_profile_t make_profile(void)
 		.baseline = make_baseline(),
 		.max_qubits = 20,
 		.max_shots = 10000,
+		.max_provider_queue_depth = 3,
 		.one_q_gate_ns = 20,
 		.two_q_gate_ns = 100,
 		.measurement_ns = 1000,
@@ -111,6 +112,7 @@ static int test_register_and_get_device(void)
 	CHECK(qhw_adm_get_device(ctx, profile.device_id, &stored) ==
 		QHW_ADM_OK);
 	CHECK(stored.device_id == profile.device_id);
+	CHECK(stored.max_provider_queue_depth == 3);
 	CHECK(stored.metadata_count == 1);
 	CHECK(stored.metadata[0].value.value.string != label);
 	CHECK(strcmp(stored.metadata[0].value.value.string, "iqm-dev") == 0);
@@ -249,6 +251,7 @@ static const char *valid_yaml =
 	"  - device_id: 8\n"
 	"    max_qubits: 20\n"
 	"    max_shots: 10000\n"
+	"    max_provider_queue_depth: 3\n"
 	"    time_span_ns: 1000000000\n"
 	"    baseline:\n"
 	"      qubit_count: 4\n"
@@ -356,6 +359,42 @@ static const char *overflow_yaml =
 	"      two_q_gate_ns: 100\n"
 	"      measurement_ns: 1000\n";
 
+static const char *negative_provider_queue_depth_yaml =
+	"devices:\n"
+	"  - device_id: 9\n"
+	"    max_qubits: 20\n"
+	"    max_provider_queue_depth: -1\n"
+	"    max_shots: 10000\n"
+	"    baseline:\n"
+	"      qubit_count: 4\n"
+	"      depth: 10\n"
+	"      one_q_gate_count: 10\n"
+	"      two_q_gate_count: 5\n"
+	"      measurement_count: 2\n"
+	"      shots: 100\n"
+	"    timing:\n"
+	"      one_q_gate_ns: 20\n"
+	"      two_q_gate_ns: 100\n"
+	"      measurement_ns: 1000\n";
+
+static const char *overflow_provider_queue_depth_yaml =
+	"devices:\n"
+	"  - device_id: 9\n"
+	"    max_qubits: 20\n"
+	"    max_provider_queue_depth: 4294967296\n"
+	"    max_shots: 10000\n"
+	"    baseline:\n"
+	"      qubit_count: 4\n"
+	"      depth: 10\n"
+	"      one_q_gate_count: 10\n"
+	"      two_q_gate_count: 5\n"
+	"      measurement_count: 2\n"
+	"      shots: 100\n"
+	"    timing:\n"
+	"      one_q_gate_ns: 20\n"
+	"      two_q_gate_ns: 100\n"
+	"      measurement_ns: 1000\n";
+
 static const char *unknown_estimator_yaml =
 	"devices:\n"
 	"  - device_id: 9\n"
@@ -386,6 +425,7 @@ static int test_config_string_and_flags(void)
 		QHW_ADM_CONFIG_MERGE) == QHW_ADM_OK);
 	CHECK(qhw_adm_get_device(ctx, 8, &stored) == QHW_ADM_OK);
 	CHECK(stored.max_qubits == 20);
+	CHECK(stored.max_provider_queue_depth == 3);
 	CHECK(qhw_adm_estimate_baseline(ctx, 8, &estimate) == QHW_ADM_OK);
 	CHECK(estimate.measurement_ns == 200000);
 	CHECK(qhw_adm_load_config_string(ctx, valid_yaml, 0, 0) ==
@@ -457,6 +497,7 @@ static int test_config_multi_device(void)
 		QHW_ADM_CONFIG_REPLACE) == QHW_ADM_OK);
 	CHECK(qhw_adm_get_device(ctx, 8, &stored) == QHW_ADM_OK);
 	CHECK(stored.device_id == 8);
+	CHECK(stored.max_provider_queue_depth == 0);
 	stored = make_profile_output();
 	CHECK(qhw_adm_get_device(ctx, 9, &stored) == QHW_ADM_OK);
 	CHECK(stored.device_id == 9);
@@ -518,6 +559,38 @@ static int test_config_rejects_overflow_unsigned(void)
 
 	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
 	CHECK(qhw_adm_load_config_string(ctx, overflow_yaml, 0,
+		QHW_ADM_CONFIG_MERGE) == QHW_ADM_ERR_INVAL);
+	CHECK(qhw_adm_get_device(ctx, 9, &stored) == QHW_ADM_ERR_NOT_FOUND);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_config_rejects_negative_provider_queue_depth(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_device_profile_t stored = make_profile_output();
+
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_load_config_string(
+		ctx,
+		negative_provider_queue_depth_yaml,
+		0,
+		QHW_ADM_CONFIG_MERGE) == QHW_ADM_ERR_INVAL);
+	CHECK(qhw_adm_get_device(ctx, 9, &stored) == QHW_ADM_ERR_NOT_FOUND);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_config_rejects_provider_queue_depth_overflow(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_device_profile_t stored = make_profile_output();
+
+	CHECK(qhw_adm_create(NULL, &ctx) == QHW_ADM_OK);
+	CHECK(qhw_adm_load_config_string(
+		ctx,
+		overflow_provider_queue_depth_yaml,
+		0,
 		QHW_ADM_CONFIG_MERGE) == QHW_ADM_ERR_INVAL);
 	CHECK(qhw_adm_get_device(ctx, 9, &stored) == QHW_ADM_ERR_NOT_FOUND);
 	qhw_adm_destroy(ctx);
@@ -642,6 +715,8 @@ int main(void)
 	CHECK(test_config_estimator_rollback() == 0);
 	CHECK(test_config_rejects_negative_unsigned() == 0);
 	CHECK(test_config_rejects_overflow_unsigned() == 0);
+	CHECK(test_config_rejects_negative_provider_queue_depth() == 0);
+	CHECK(test_config_rejects_provider_queue_depth_overflow() == 0);
 	CHECK(test_config_file() == 0);
 	CHECK(test_external_estimator_load() == 0);
 	CHECK(test_estimator_search_path() == 0);

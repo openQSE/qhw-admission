@@ -152,6 +152,27 @@ static qhw_adm_reservation_t make_reservation_output(void)
 	return reservation;
 }
 
+static qhw_adm_reservation_filter_t make_reservation_filter(void)
+{
+	qhw_adm_reservation_filter_t filter;
+
+	memset(&filter, 0, sizeof(filter));
+	filter.struct_size = sizeof(filter);
+	return filter;
+}
+
+static void init_reservation_outputs(
+	qhw_adm_reservation_t *reservations,
+	size_t reservation_count)
+{
+	size_t i;
+
+	memset(reservations, 0, reservation_count * sizeof(*reservations));
+	for (i = 0; i < reservation_count; i++) {
+		reservations[i].struct_size = sizeof(reservations[i]);
+	}
+}
+
 static qhw_adm_usage_t make_usage(uint64_t task_id, uint64_t baseline_units)
 {
 	qhw_adm_usage_t usage = {
@@ -233,6 +254,108 @@ static int test_reserve_and_release(void)
 	CHECK(qhw_adm_get_capacity(ctx, request.device_id, request.scope_id,
 		&capacity) == QHW_ADM_OK);
 	CHECK(capacity.active_reservation_count == 0);
+	qhw_adm_destroy(ctx);
+	return 0;
+}
+
+static int test_list_reservations(void)
+{
+	qhw_adm_t *ctx = NULL;
+	qhw_adm_qtask_class_t task = make_task();
+	qhw_adm_request_t request = make_request(&task);
+	qhw_adm_decision_t first = make_decision_output();
+	qhw_adm_decision_t second = make_decision_output();
+	qhw_adm_decision_t third = make_decision_output();
+	qhw_adm_reservation_t reservations[4];
+	qhw_adm_reservation_t invalid[1];
+	qhw_adm_reservation_filter_t filter = make_reservation_filter();
+	size_t count = 0;
+	size_t total = 0;
+
+	CHECK(setup_context(&ctx) == 0);
+	CHECK(qhw_adm_reserve(ctx, &request, &first) == QHW_ADM_OK);
+	request.request_id++;
+	request.user_id = 1001;
+	CHECK(qhw_adm_reserve(ctx, &request, &second) == QHW_ADM_OK);
+	request.request_id++;
+	request.user_id = 1000;
+	request.job_id = 3000;
+	request.scope_id = 4;
+	CHECK(qhw_adm_reserve(ctx, &request, &third) == QHW_ADM_OK);
+	CHECK(qhw_adm_release(ctx, first.reservation_id,
+		QHW_ADM_REASON_NONE) == QHW_ADM_OK);
+	CHECK(qhw_adm_cancel(ctx, second.reservation_id,
+		QHW_ADM_REASON_NONE) == QHW_ADM_OK);
+
+	init_reservation_outputs(reservations, 4);
+	CHECK(qhw_adm_list_reservations(ctx, NULL, 0, reservations, 4,
+		&count, &total) == QHW_ADM_OK);
+	CHECK(total == 3);
+	CHECK(count == 3);
+	CHECK(reservations[0].reservation_id == first.reservation_id);
+	CHECK(reservations[1].reservation_id == second.reservation_id);
+	CHECK(reservations[2].reservation_id == third.reservation_id);
+	CHECK(reservations[0].state == QHW_ADM_RESERVATION_RELEASED);
+	CHECK(reservations[1].state == QHW_ADM_RESERVATION_CANCELLED);
+	CHECK(reservations[2].state == QHW_ADM_RESERVATION_ACTIVE);
+
+	filter.flags = QHW_ADM_RESERVATION_FILTER_STATE;
+	filter.state = QHW_ADM_RESERVATION_ACTIVE;
+	init_reservation_outputs(reservations, 2);
+	CHECK(qhw_adm_list_reservations(ctx, &filter, 0, reservations, 2,
+		&count, &total) == QHW_ADM_OK);
+	CHECK(total == 1);
+	CHECK(count == 1);
+	CHECK(reservations[0].reservation_id == third.reservation_id);
+
+	filter = make_reservation_filter();
+	filter.flags = QHW_ADM_RESERVATION_FILTER_USER_ID;
+	filter.user_id = 1000;
+	init_reservation_outputs(reservations, 2);
+	CHECK(qhw_adm_list_reservations(ctx, &filter, 0, reservations, 2,
+		&count, &total) == QHW_ADM_OK);
+	CHECK(total == 2);
+	CHECK(count == 2);
+	CHECK(reservations[0].reservation_id == first.reservation_id);
+	CHECK(reservations[1].reservation_id == third.reservation_id);
+
+	filter = make_reservation_filter();
+	filter.flags = QHW_ADM_RESERVATION_FILTER_SCOPE_ID;
+	filter.scope_id = 4;
+	init_reservation_outputs(reservations, 2);
+	CHECK(qhw_adm_list_reservations(ctx, &filter, 0, reservations, 2,
+		&count, &total) == QHW_ADM_OK);
+	CHECK(total == 1);
+	CHECK(count == 1);
+	CHECK(reservations[0].reservation_id == third.reservation_id);
+
+	init_reservation_outputs(reservations, 1);
+	CHECK(qhw_adm_list_reservations(ctx, NULL, 1, reservations, 1,
+		&count, &total) == QHW_ADM_OK);
+	CHECK(total == 3);
+	CHECK(count == 1);
+	CHECK(reservations[0].reservation_id == second.reservation_id);
+
+	CHECK(qhw_adm_list_reservations(ctx, NULL, 0, NULL, 0,
+		&count, &total) == QHW_ADM_OK);
+	CHECK(total == 3);
+	CHECK(count == 0);
+
+	memset(invalid, 0, sizeof(invalid));
+	CHECK(qhw_adm_list_reservations(ctx, NULL, 0, invalid, 1,
+		&count, &total) == QHW_ADM_ERR_INVAL);
+
+	filter = make_reservation_filter();
+	filter.flags = (uint64_t)1 << 62;
+	CHECK(qhw_adm_list_reservations(ctx, &filter, 0, NULL, 0,
+		&count, &total) == QHW_ADM_ERR_INVAL);
+
+	filter = make_reservation_filter();
+	filter.flags = QHW_ADM_RESERVATION_FILTER_STATE;
+	filter.state = (qhw_adm_reservation_state_t)99;
+	CHECK(qhw_adm_list_reservations(ctx, &filter, 0, NULL, 0,
+		&count, &total) == QHW_ADM_ERR_INVAL);
+
 	qhw_adm_destroy(ctx);
 	return 0;
 }
@@ -361,6 +484,7 @@ int main(void)
 {
 	CHECK(test_evaluate_accepts_without_capacity() == 0);
 	CHECK(test_reserve_and_release() == 0);
+	CHECK(test_list_reservations() == 0);
 	CHECK(test_conflicting_idempotent_usage_rejected() == 0);
 	CHECK(test_cancel_and_expire() == 0);
 	CHECK(test_device_state_blocks_admission() == 0);
